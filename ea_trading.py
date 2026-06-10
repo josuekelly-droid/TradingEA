@@ -661,7 +661,7 @@ class TradingEngine:
     def generate_trade_setup(self, symbol: str, analysis: Dict) -> Optional[TradeSetup]:
         trade_score = analysis['trade_score']
         
-        if trade_score['confidence'] < 0.25:
+        if trade_score['confidence'] < 0.60:
             logger.info(f"Score de confiance insuffisant pour {symbol}: {trade_score['confidence']:.2f}")
             return None
         
@@ -959,7 +959,7 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
     
     def _get_max_spread(self, symbol: str) -> float:
         spreads = {
-            'BTCUSD': 100.0,
+            'BTCUSD': 50.0,
             'XAUUSD': 5.0
         }
         return spreads.get(symbol, 10.0)
@@ -1104,13 +1104,20 @@ class ExpertAdvisor:
         self.trading_engine.manage_open_positions()
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
+        
+        # Filtre de session US
+        if analysis['session']['session'] not in ['us', 'overlap_london_us']:
+          if analysis['trade_score']['confidence'] < 0.85:
+            logger.info("Trade hors session US avec confiance insuffisante")
+            return False
+        
         if analysis['atr'] < analysis['atr'] * 0.5:
             logger.info("Volatilite insuffisante")
             return False
         
-        # if not self.confirm_multi_timeframe(setup.symbol, setup.direction):
-        #     logger.info("Tendance non confirmee sur timeframe superieur")
-        #     return False
+        if not self.confirm_multi_timeframe(setup.symbol, setup.direction):
+            logger.info("Tendance non confirmee sur timeframe superieur")
+            return False
         
         return True
     
