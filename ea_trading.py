@@ -782,16 +782,11 @@ class TradingEngine:
                 bb_state = "Dans les bandes"
             
             comment = (
-                f"EA_Pro|{setup.direction}|{setup.symbol}|{timeframe}|"
-                f"Conf:{setup.confidence:.0%}|"
-                f"RSI:{rsi_value:.1f}({rsi_state})|"
-                f"MACD:{macd_state}|"
-                f"ST:{st_direction}|"
-                f"BB:{bb_state}|"
-                f"ATR:{analysis['atr']:.1f}|"
-                f"Sess:{session['name']}|"
-                f"News:{news['bias']}"
-            )
+    f"EA|{setup.direction}|{setup.symbol}|{timeframe}|"
+    f"C:{setup.confidence:.0%}|"
+    f"RSI:{rsi_value:.0f}|"
+    f"S:{session['name']}"
+)
             
             logger.info("=" * 60)
             logger.info(f"[TRADE OUVERT] {setup.symbol} - {setup.direction}")
@@ -987,7 +982,7 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
     def _get_max_spread(self, symbol: str) -> float:
         spreads = {
             'BTCUSD': 50.0,
-            'XAUUSD': 3.0
+            'XAUUSD': 5.0
         }
         return spreads.get(symbol, 10.0)
     
