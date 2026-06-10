@@ -1108,9 +1108,9 @@ class ExpertAdvisor:
             logger.info("Volatilite insuffisante")
             return False
         
-        if not self.confirm_multi_timeframe(setup.symbol, setup.direction):
-            logger.info("Tendance non confirmee sur timeframe superieur")
-            return False
+        # if not self.confirm_multi_timeframe(setup.symbol, setup.direction):
+        #     logger.info("Tendance non confirmee sur timeframe superieur")
+        #     return False
         
         return True
     
