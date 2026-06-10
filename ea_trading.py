@@ -1147,10 +1147,10 @@ class ExpertAdvisor:
         """Filtres additionnels specifiques a l'EA"""
         
         # SEUIL AJUSTE : 0.50 au lieu de 0.85
-        if analysis['session']['session'] not in ['us', 'overlap_london_us']:
-            if analysis['trade_score']['confidence'] < 0.50:
-                logger.info("Trade hors session US avec confiance insuffisante")
-                return False
+        # if analysis['session']['session'] not in ['us', 'overlap_london_us']:
+        #     if analysis['trade_score']['confidence'] < 0.50:
+        #         logger.info("Trade hors session US avec confiance insuffisante")
+        #         return False
         
         if analysis['atr'] < analysis['atr'] * 0.5:
             logger.info("Volatilite insuffisante")
