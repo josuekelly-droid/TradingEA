@@ -724,7 +724,7 @@ class TradingEngine:
         trade_score = analysis['trade_score']
         
         # SEUIL AJUSTE : 0.35 au lieu de 0.60
-        if trade_score['confidence'] < 0.35:
+        if trade_score['confidence'] < 0.25:
             logger.info(f"Score de confiance insuffisant pour {symbol}: {trade_score['confidence']:.2f}")
             return None
         
