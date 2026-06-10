@@ -1,7 +1,7 @@
 """
 Expert Advisor Professionnel - BTC/USD & Gold/USD
 Auteur: Trading System Pro
-Version: 3.4 - Stable avec corrections d'execution
+Version: 3.5 - Stable avec corrections d'execution
 """
 
 import numpy as np
