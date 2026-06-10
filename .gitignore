@@ -1,0 +1,18 @@
+
+config.json
+*.log
+
+# Environnement Python
+venv/
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+
+.vscode/
+.idea/
+
+
+.DS_Store
+Thumbs.db

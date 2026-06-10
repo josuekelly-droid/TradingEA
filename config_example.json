@@ -1,0 +1,18 @@
+{
+  "symbols": ["BTCUSD", "XAUUSD"],
+  "timeframes": ["H1", "H4"],
+  "mt5_credentials": {
+    "login": 0,
+    "password": "votre_mot_de_passe",
+    "server": "VotreServeur-MT5"
+  },
+  "news_api": {
+    "api_key": "votre_clé_api_newsapi_org",
+    "enabled": false
+  },
+  "risk_management": {
+    "risk_percent": 1.0,
+    "max_daily_loss_percent": 2.0,
+    "max_positions": 3
+  }
+}
