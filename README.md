@@ -1,6 +1,6 @@
 # 🤖 Expert Advisor Pro - BTC/USD & Gold/USD
 
-![Version](https://img.shields.io/badge/version-3.4-blue)
+![Version](https://img.shields.io/badge/version-3.5-blue)
 ![Python](https://img.shields.io/badge/python-3.9+-green)
 ![MT5](https://img.shields.io/badge/MT5-Compatible-orange)
 ![Licence](https://img.shields.io/badge/licence-MIT-yellow)
