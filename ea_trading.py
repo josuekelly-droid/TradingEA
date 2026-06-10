@@ -781,12 +781,7 @@ class TradingEngine:
             else:
                 bb_state = "Dans les bandes"
             
-            comment = (
-    f"EA|{setup.direction}|{setup.symbol}|{timeframe}|"
-    f"C:{setup.confidence:.0%}|"
-    f"RSI:{rsi_value:.0f}|"
-    f"S:{session['name']}"
-)
+            comment = f"EA_{setup.direction}_{timeframe}"
             
             logger.info("=" * 60)
             logger.info(f"[TRADE OUVERT] {setup.symbol} - {setup.direction}")
