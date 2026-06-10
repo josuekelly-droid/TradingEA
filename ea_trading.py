@@ -758,10 +758,8 @@ class TradingEngine:
             else:
                 bb_state = "Dans les bandes"
             
-            # Commentaire COURT pour MT5 (limite 27 caracteres)
             comment = f"EA_{setup.direction}_{timeframe}"
             
-            # Logs detailles (pas de limite)
             logger.info("=" * 60)
             logger.info(f"[TRADE OUVERT] {setup.symbol} - {setup.direction}")
             logger.info(f"  Timeframe: {timeframe}")
@@ -867,17 +865,14 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             if not self._pre_trade_checks(setup):
                 return False
             
-            # Generer le commentaire MT5 (court)
             if analysis:
                 mt5_comment = self._send_mt5_notification(setup, analysis, timeframe)
             else:
                 mt5_comment = "EA_Pro"
             
-            # Envoyer l'alerte Telegram
             if analysis and telegram_config:
                 self._send_telegram_alert(setup, analysis, timeframe, telegram_config)
             
-            # Infos du symbole
             symbol_info = mt5.symbol_info(setup.symbol)
             if symbol_info is None:
                 logger.error(f"Impossible d'obtenir les infos pour {setup.symbol}")
@@ -886,7 +881,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             vol_min = symbol_info.volume_min
             vol_step = symbol_info.volume_step
             
-            # Tick pour le prix reel
             tick = mt5.symbol_info_tick(setup.symbol)
             if tick is None:
                 logger.error(f"Impossible d'obtenir le tick pour {setup.symbol}")
@@ -899,7 +893,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
                 order_type = mt5.ORDER_TYPE_BUY if setup.direction == 'BUY' else mt5.ORDER_TYPE_SELL
                 price = tick.ask if setup.direction == 'BUY' else tick.bid
                 
-                # Calcul du volume correct
                 volume = max(vol_min, round(float(lot) / vol_step) * vol_step)
                 volume = round(volume, 2)
                 
@@ -1003,8 +996,8 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         
         self._apply_trailing_stop(position, current_price, profit_pips)
         self._apply_break_even(position, current_price, profit_pips)
-    
-        def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
+
+    def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
         """Applique un trailing stop - Active a 150 pips"""
         symbol = position.symbol
         activation_pips = 150
@@ -1012,17 +1005,17 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         
         if profit_pips >= activation_pips:
             point = mt5.symbol_info(symbol).point
-            if position.type == 0:  # BUY
+            if position.type == 0:
                 new_sl = current_price - (trailing_distance * point)
                 if new_sl > position.sl:
                     self._modify_position(position.ticket, new_sl, position.tp)
                     logger.info(f"Trailing stop applique sur {position.ticket} a {new_sl}")
-            else:  # SELL
+            else:
                 new_sl = current_price + (trailing_distance * point)
                 if new_sl < position.sl or position.sl == 0:
                     self._modify_position(position.ticket, new_sl, position.tp)
                     logger.info(f"Trailing stop applique sur {position.ticket} a {new_sl}")
-    
+
     def _apply_break_even(self, position, current_price: float, profit_pips: float):
         """Applique le break-even en positif (+10 pips) a 150 pips de profit"""
         symbol = position.symbol
@@ -1031,15 +1024,15 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         
         if profit_pips >= be_activation:
             point = mt5.symbol_info(symbol).point
-            if position.type == 0:  # BUY
+            if position.type == 0:
                 new_sl = position.price_open + (be_positive_offset * point)
-            else:  # SELL
+            else:
                 new_sl = position.price_open - (be_positive_offset * point)
             
             if new_sl != position.sl:
                 self._modify_position(position.ticket, new_sl, position.tp)
                 logger.info(f"Break-even +{be_positive_offset} pips applique sur {position.ticket}")
-    
+
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
         """Modifie une position existante"""
         request = {
@@ -1111,12 +1104,6 @@ class ExpertAdvisor:
         self.trading_engine.manage_open_positions()
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
-        # Filtre session desactive pour test
-        # if analysis['session']['session'] not in ['us', 'overlap_london_us']:
-        #     if analysis['trade_score']['confidence'] < 0.50:
-        #         logger.info("Trade hors session US avec confiance insuffisante")
-        #         return False
-        
         if analysis['atr'] < analysis['atr'] * 0.5:
             logger.info("Volatilite insuffisante")
             return False
