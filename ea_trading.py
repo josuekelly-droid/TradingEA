@@ -1,7 +1,7 @@
 """
 Expert Advisor Professionnel - BTC/USD & Gold/USD
 Auteur: Trading System Pro
-Version: 3.3 - Corrections execution + Seuil Test 0.25
+Version: 3.4 - Stable avec corrections d'execution
 """
 
 import numpy as np
@@ -43,13 +43,13 @@ class TradingConfig:
 class TradeSetup:
     """Structure d'un setup de trade"""
     symbol: str
-    direction: str  # 'BUY' ou 'SELL'
+    direction: str
     entry_price: float
     sl_price: float
     tp1_price: float
     tp2_price: float
     tp3_price: float
-    lot_sizes: List[float]  # [lot_tp1, lot_tp2, lot_tp3]
+    lot_sizes: List[float]
     confidence: float
     timestamp: datetime
 
@@ -371,30 +371,6 @@ class ProfessionalIndicators:
             'lower': lower_band,
             'width': (upper_band - lower_band) / sma * 100
         }
-    
-    @staticmethod
-    def calculate_market_profile(high: pd.Series, low: pd.Series, close: pd.Series, 
-                                volume: pd.Series) -> Dict:
-        price_range = pd.concat([high, low, close])
-        price_bins = pd.cut(price_range, bins=50)
-        
-        volume_profile = volume.groupby(price_bins).sum()
-        poc_price = volume_profile.idxmax()
-        
-        total_volume = volume_profile.sum()
-        value_area_volume = total_volume * 0.70
-        cumulative_volume = volume_profile.sort_index().cumsum()
-        
-        value_area = cumulative_volume[cumulative_volume <= value_area_volume]
-        vah = value_area.index.max()
-        val = value_area.index.min()
-        
-        return {
-            'poc': poc_price,
-            'vah': vah,
-            'val': val,
-            'value_area_volume': value_area_volume
-        }
 
 class SessionAnalyzer:
     """Analyseur de sessions de marche"""
@@ -508,7 +484,7 @@ class RiskManager:
         return max_lots.get(symbol, 1.0)
 
 class TradingEngine:
-    """Moteur de trading principal"""
+    """Moteur de trading principal - Version stable"""
     
     def __init__(self, config: Dict):
         self.indicators = ProfessionalIndicators()
@@ -749,6 +725,7 @@ class TradingEngine:
         }
     
     def _send_mt5_notification(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> str:
+        """Envoie une notification detaillee dans les logs - Commentaire court pour MT5"""
         try:
             signals = analysis['trade_score']['signals']
             session = analysis['session']
@@ -781,8 +758,10 @@ class TradingEngine:
             else:
                 bb_state = "Dans les bandes"
             
+            # Commentaire COURT pour MT5 (limite 27 caracteres)
             comment = f"EA_{setup.direction}_{timeframe}"
             
+            # Logs detailles (pas de limite)
             logger.info("=" * 60)
             logger.info(f"[TRADE OUVERT] {setup.symbol} - {setup.direction}")
             logger.info(f"  Timeframe: {timeframe}")
@@ -808,9 +787,10 @@ class TradingEngine:
             
         except Exception as e:
             logger.error(f"Erreur creation notification MT5: {e}")
-            return f"EA_Pro|{setup.direction}|{setup.symbol}"
+            return f"EA_Pro"
     
     def _send_telegram_alert(self, setup: TradeSetup, analysis: Dict, timeframe: str, telegram_config: Dict):
+        """Envoie une alerte Telegram detaillee"""
         try:
             if not telegram_config.get('enabled', False):
                 return
@@ -882,25 +862,29 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             logger.error(f"[TELEGRAM] Erreur: {e}")
     
     def execute_trade(self, setup: TradeSetup, analysis: Dict = None, timeframe: str = "H1", telegram_config: Dict = None) -> bool:
-        """Execute le trade sur MT5 avec notifications"""
+        """Execute le trade sur MT5 avec notifications - Version corrigee"""
         try:
             if not self._pre_trade_checks(setup):
                 return False
             
+            # Generer le commentaire MT5 (court)
             if analysis:
                 mt5_comment = self._send_mt5_notification(setup, analysis, timeframe)
             else:
-                mt5_comment = f"EA_Pro|{setup.direction}|{setup.symbol}"
+                mt5_comment = "EA_Pro"
             
+            # Envoyer l'alerte Telegram
             if analysis and telegram_config:
                 self._send_telegram_alert(setup, analysis, timeframe, telegram_config)
             
-            # Infos du symbole pour les decimales
+            # Infos du symbole
             symbol_info = mt5.symbol_info(setup.symbol)
             if symbol_info is None:
                 logger.error(f"Impossible d'obtenir les infos pour {setup.symbol}")
                 return False
             digits = symbol_info.digits
+            vol_min = symbol_info.volume_min
+            vol_step = symbol_info.volume_step
             
             # Tick pour le prix reel
             tick = mt5.symbol_info_tick(setup.symbol)
@@ -915,20 +899,26 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
                 order_type = mt5.ORDER_TYPE_BUY if setup.direction == 'BUY' else mt5.ORDER_TYPE_SELL
                 price = tick.ask if setup.direction == 'BUY' else tick.bid
                 
+                # Calcul du volume correct
+                volume = max(vol_min, round(float(lot) / vol_step) * vol_step)
+                volume = round(volume, 2)
+                
                 request = {
                     "action": mt5.TRADE_ACTION_DEAL,
                     "symbol": setup.symbol,
-                    "volume": float(lot),
+                    "volume": volume,
                     "type": order_type,
                     "price": round(price, digits),
                     "sl": round(float(setup.sl_price), digits),
                     "tp": round(float(tp_price), digits),
                     "deviation": 20,
                     "magic": 123456,
-                    "comment": f"{mt5_comment}|TP{i+1}",
+                    "comment": f"{mt5_comment}_TP{i+1}",
                     "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": mt5.ORDER_FILLING_FOK,
                 }
+                
+                logger.info(f"Envoi ordre {i+1}: {setup.symbol} {setup.direction} Vol:{volume} Prix:{round(price, digits)}")
                 
                 result = mt5.order_send(request)
                 
@@ -959,7 +949,7 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         max_spread = self._get_max_spread(setup.symbol)
         
         if spread > max_spread:
-            logger.warning(f"Spread trop eleve: {spread}")
+            logger.warning(f"Spread trop eleve: {spread} (max: {max_spread})")
             return False
         
         positions = mt5.positions_get(symbol=setup.symbol)
