@@ -998,10 +998,10 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         self._apply_break_even(position, current_price, profit_pips)
 
     def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
-        """Applique un trailing stop - Active a 150 pips"""
+        """Applique un trailing stop - Active a 250 pips, distance 100 pips"""
         symbol = position.symbol
-        activation_pips = 150
-        trailing_distance = 50
+        activation_pips = 250
+        trailing_distance = 100
         
         if profit_pips >= activation_pips:
             point = mt5.symbol_info(symbol).point
@@ -1017,10 +1017,10 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
                     logger.info(f"Trailing stop applique sur {position.ticket} a {new_sl}")
 
     def _apply_break_even(self, position, current_price: float, profit_pips: float):
-        """Applique le break-even en positif (+10 pips) a 150 pips de profit"""
+        """Applique le break-even en positif (+50 pips) a 250 pips de profit"""
         symbol = position.symbol
-        be_activation = 150
-        be_positive_offset = 10
+        be_activation = 250
+        be_positive_offset = 50
         
         if profit_pips >= be_activation:
             point = mt5.symbol_info(symbol).point
