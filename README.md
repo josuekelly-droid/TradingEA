@@ -44,7 +44,7 @@ Expert Advisor professionnel pour le trading automatique de **BTC/USD** et **Gol
 
 ```bash
 # Cloner le repo
-git clone https://github.com/votre-username/TradingEA.git
+git clone https://github.com/josuekelly-droid/TradingEA.git
 cd TradingEA
 
 # Créer l'environnement virtuel
