@@ -14,5 +14,10 @@
     "risk_percent": 1.0,
     "max_daily_loss_percent": 2.0,
     "max_positions": 3
+  },
+  "telegram": {
+    "enabled": false,
+    "bot_token": "1234567890:AAFfghiHHHZUZUJSJjkLMNOPqrstUVWXYZabc123",
+    "chat_id": "987663631"
   }
 }

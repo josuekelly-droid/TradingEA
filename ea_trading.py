@@ -1,7 +1,7 @@
 """
 Expert Advisor Professionnel - BTC/USD & Gold/USD
 Auteur: Trading System Pro
-Version: 3.0
+Version: 3.1 - Avec Notifications MT5 & Telegram
 """
 
 import numpy as np
@@ -15,6 +15,7 @@ import logging
 from concurrent.futures import ThreadPoolExecutor
 import json
 import time
+import os
 
 # Configuration du logging
 logging.basicConfig(
@@ -547,12 +548,11 @@ class TradingEngine:
     
     def __init__(self, config: Dict):
         self.indicators = ProfessionalIndicators()
-        # ✅ MODIFIÉ : Passage de la config complète au lieu d'une string
         self.news_analyzer = NewsAnalyzer(config.get('news_api', {}))
         self.session_analyzer = SessionAnalyzer()
         self.risk_manager = None
         
-        # ✅ CORRIGÉ : Bon ordre des paramètres
+        # Initialiser MT5
         self._initialize_mt5(config.get('mt5_credentials', {}))
         
         # Cache des données
@@ -560,8 +560,12 @@ class TradingEngine:
         
     def _initialize_mt5(self, credentials: Dict) -> bool:
         """Initialise la connexion MT5"""
+        if not credentials:
+            logger.error("Credentials MT5 non fournis")
+            return False
+            
         if not mt5.initialize():
-            logger.error("Échec d'initialisation de MT5")
+            logger.error("Echec d'initialisation de MT5")
             return False
             
         authorized = mt5.login(
@@ -571,10 +575,10 @@ class TradingEngine:
         )
         
         if not authorized:
-            logger.error(f"Échec d'authentification MT5: {mt5.last_error()}")
+            logger.error(f"Echec d'authentification MT5: {mt5.last_error()}")
             return False
             
-        logger.info("Connexion MT5 réussie")
+        logger.info("Connexion MT5 reussie")
         return True
     
     def fetch_market_data(self, symbol: str, timeframe: str, 
@@ -585,7 +589,7 @@ class TradingEngine:
                                            0, num_bars)
             
             if rates is None:
-                logger.error(f"Erreur récupération données pour {symbol}")
+                logger.error(f"Erreur recuperation donnees pour {symbol}")
                 return pd.DataFrame()
             
             df = pd.DataFrame(rates)
@@ -685,7 +689,7 @@ class TradingEngine:
                 signals.append("RSI momentum positif")
             else:
                 score -= 0.5
-                signals.append("RSI momentum négatif")
+                signals.append("RSI momentum negatif")
         
         # 4. MACD (1 point)
         if macd['histogram'].iloc[-1] > 0 and macd['histogram'].iloc[-1] > macd['histogram'].iloc[-2]:
@@ -699,10 +703,10 @@ class TradingEngine:
         bb_position = (data['close'].iloc[-1] - bb['lower'].iloc[-1]) / (bb['upper'].iloc[-1] - bb['lower'].iloc[-1])
         if bb_position < 0.2:  # Proche de la bande inférieure
             score += 1
-            signals.append("Prix proche bande inférieure BB")
+            signals.append("Prix proche bande inferieure BB")
         elif bb_position > 0.8:  # Proche de la bande supérieure
             score -= 1
-            signals.append("Prix proche bande supérieure BB")
+            signals.append("Prix proche bande superieure BB")
         
         # 6. Session de trading (2 points)
         session_weight = self.session_analyzer.get_session_weight(
@@ -718,10 +722,10 @@ class TradingEngine:
         if news['impact_score'] > 0:
             if news['bias'] == 'bullish':
                 score += 1
-                signals.append("News haussières")
+                signals.append("News haussieres")
             elif news['bias'] == 'bearish':
                 score -= 1
-                signals.append("News baissières")
+                signals.append("News baissieres")
         
         # Normaliser le score
         normalized_score = max(-max_score, min(max_score, score))
@@ -783,7 +787,7 @@ class TradingEngine:
             timestamp=datetime.now()
         )
         
-        logger.info(f"Trade setup généré pour {symbol}:")
+        logger.info(f"Trade setup genere pour {symbol}:")
         logger.info(f"Direction: {direction}")
         logger.info(f"Entry: {entry_price}")
         logger.info(f"SL: {sl_price}")
@@ -805,12 +809,185 @@ class TradingEngine:
             'support': recent_low
         }
     
-    def execute_trade(self, setup: TradeSetup) -> bool:
-        """Exécute le trade sur MT5"""
+    # ============================================================
+    # NOUVELLES METHODES : NOTIFICATIONS MT5 & TELEGRAM
+    # ============================================================
+    
+    def _send_mt5_notification(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> str:
+        """Envoie une notification detaillee dans MT5 et les logs"""
+        try:
+            # Extraire les signaux
+            signals = analysis['trade_score']['signals']
+            session = analysis['session']
+            news = analysis['news']
+            
+            # Determiner l'etat de chaque indicateur
+            st_signal = [s for s in signals if 'SuperTrend' in s]
+            st_direction = st_signal[0] if st_signal else "Neutre"
+            
+            rsi_value = analysis['rsi']
+            if rsi_value > 70:
+                rsi_state = "Surachat"
+            elif rsi_value < 30:
+                rsi_state = "Survente"
+            elif rsi_value > 50:
+                rsi_state = "Haussier"
+            else:
+                rsi_state = "Baissier"
+            
+            macd_hist = analysis['macd']['histogram'].iloc[-1]
+            macd_state = "Haussier" if macd_hist > 0 else "Baissier"
+            
+            bb_lower = analysis['bollinger_bands']['lower'].iloc[-1]
+            bb_upper = analysis['bollinger_bands']['upper'].iloc[-1]
+            current_price = analysis['current_price']
+            
+            if current_price <= bb_lower * 1.05:
+                bb_state = "Proche bande basse"
+            elif current_price >= bb_upper * 0.95:
+                bb_state = "Proche bande haute"
+            else:
+                bb_state = "Dans les bandes"
+            
+            # Message detaille pour MT5
+            comment = (
+                f"EA_Pro|{setup.direction}|{setup.symbol}|{timeframe}|"
+                f"Conf:{setup.confidence:.0%}|"
+                f"RSI:{rsi_value:.1f}({rsi_state})|"
+                f"MACD:{macd_state}|"
+                f"ST:{st_direction}|"
+                f"BB:{bb_state}|"
+                f"ATR:{analysis['atr']:.1f}|"
+                f"Sess:{session['name']}|"
+                f"News:{news['bias']}"
+            )
+            
+            # Logger la notification detaillee
+            logger.info("=" * 60)
+            logger.info(f"[TRADE OUVERT] {setup.symbol} - {setup.direction}")
+            logger.info(f"  Timeframe: {timeframe}")
+            logger.info(f"  Session: {session['name']}")
+            logger.info(f"  Prix: {setup.entry_price:.2f}")
+            logger.info(f"  SL: {setup.sl_price:.2f}")
+            logger.info(f"  TP1: {setup.tp1_price:.2f} | TP2: {setup.tp2_price:.2f} | TP3: {setup.tp3_price:.2f}")
+            logger.info(f"  Lots: {[f'{l:.3f}' for l in setup.lot_sizes]}")
+            logger.info(f"  Confiance: {setup.confidence:.1%}")
+            logger.info(f"  --- Indicateurs ---")
+            logger.info(f"  SuperTrend: {st_direction}")
+            logger.info(f"  RSI: {rsi_value:.1f} ({rsi_state})")
+            logger.info(f"  MACD: {macd_state} (Histogram: {macd_hist:.1f})")
+            logger.info(f"  Bollinger: {bb_state}")
+            logger.info(f"  ATR: {analysis['atr']:.1f}")
+            logger.info(f"  News: {news['bias']} (impact: {news['impact_score']:.2f})")
+            logger.info(f"  --- Signaux ---")
+            for signal in signals:
+                logger.info(f"  - {signal}")
+            logger.info("=" * 60)
+            
+            return comment
+            
+        except Exception as e:
+            logger.error(f"Erreur creation notification MT5: {e}")
+            return f"EA_Pro|{setup.direction}|{setup.symbol}"
+    
+    def _send_telegram_alert(self, setup: TradeSetup, analysis: Dict, timeframe: str, telegram_config: Dict):
+        """Envoie une alerte Telegram detaillee"""
+        try:
+            if not telegram_config.get('enabled', False):
+                return
+            
+            bot_token = telegram_config.get('bot_token', '')
+            chat_id = telegram_config.get('chat_id', '')
+            
+            if not bot_token or not chat_id:
+                logger.warning("[TELEGRAM] Configuration incomplete, alerte non envoyee")
+                return
+            
+            # Extraire les donnees
+            signals = analysis['trade_score']['signals']
+            session = analysis['session']
+            news = analysis['news']
+            rsi_value = analysis['rsi']
+            macd_hist = analysis['macd']['histogram'].iloc[-1]
+            
+            # Determiner l'etat des indicateurs
+            if rsi_value > 70:
+                rsi_state = "Surachat"
+            elif rsi_value < 30:
+                rsi_state = "Survente"
+            elif rsi_value > 50:
+                rsi_state = "Haussier"
+            else:
+                rsi_state = "Baissier"
+            
+            macd_state = "Haussier" if macd_hist > 0 else "Baissier"
+            
+            # Calculer le risque
+            risk_amount = self.risk_manager.account_balance * (self.risk_manager.risk_percent / 100) if self.risk_manager else 0
+            
+            # Creer le message
+            message = f"""
+[EA PRO] TRADE OUVERT - {setup.timestamp.strftime('%Y-%m-%d %H:%M:%S')} UTC
+
+Symbol: {setup.symbol} | Direction: {setup.direction}
+Timeframe: {timeframe} | Session: {session['name']}
+Prix d'entree: {setup.entry_price:.2f}
+
+Stop Loss: {setup.sl_price:.2f}
+Take Profit 1: {setup.tp1_price:.2f}
+Take Profit 2: {setup.tp2_price:.2f}
+Take Profit 3: {setup.tp3_price:.2f}
+
+Lots: {setup.lot_sizes[0]:.3f} / {setup.lot_sizes[1]:.3f} / {setup.lot_sizes[2]:.3f}
+Confiance: {setup.confidence:.1%}
+
+Indicateurs en temps reel:
+- SuperTrend: {signals[0] if signals else 'N/A'}
+- RSI: {rsi_value:.1f} ({rsi_state})
+- MACD: {macd_state} (Histogram: {macd_hist:.1f})
+- ATR: {analysis['atr']:.1f}
+- News Impact: {news['impact_score']:.2f} ({news['bias']})
+
+Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager else 1.0}% du capital)
+            """
+            
+            # Envoyer a Telegram
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            params = {
+                'chat_id': chat_id,
+                'text': message.strip()
+            }
+            
+            response = requests.post(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("[TELEGRAM] Alerte envoyee avec succes")
+            else:
+                logger.warning(f"[TELEGRAM] Erreur envoi: {response.status_code}")
+                
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Erreur: {e}")
+    
+    # ============================================================
+    # FIN DES NOUVELLES METHODES
+    # ============================================================
+    
+    def execute_trade(self, setup: TradeSetup, analysis: Dict = None, timeframe: str = "H1", telegram_config: Dict = None) -> bool:
+        """Exécute le trade sur MT5 avec notifications"""
         try:
             # Vérifier les conditions avant l'exécution
             if not self._pre_trade_checks(setup):
                 return False
+            
+            # Generer le commentaire detaille pour MT5
+            if analysis:
+                mt5_comment = self._send_mt5_notification(setup, analysis, timeframe)
+            else:
+                mt5_comment = f"EA_Pro|{setup.direction}|{setup.symbol}"
+            
+            # Envoyer l'alerte Telegram
+            if analysis and telegram_config:
+                self._send_telegram_alert(setup, analysis, timeframe, telegram_config)
             
             # Préparer les ordres
             for i, (tp_price, lot) in enumerate(zip(
@@ -829,7 +1006,7 @@ class TradingEngine:
                     "tp": tp_price,
                     "deviation": 20,
                     "magic": 123456,
-                    "comment": f"EA_TP{i+1}",
+                    "comment": f"{mt5_comment}|TP{i+1}",
                     "type_time": mt5.ORDER_TIME_GTC,
                     "type_filling": mt5.ORDER_FILLING_IOC,
                 }
@@ -837,15 +1014,15 @@ class TradingEngine:
                 result = mt5.order_send(request)
                 
                 if result.retcode != mt5.TRADE_RETCODE_DONE:
-                    logger.error(f"Erreur exécution trade TP{i+1}: {result.comment}")
+                    logger.error(f"Erreur execution trade TP{i+1}: {result.comment}")
                     return False
                 
-                logger.info(f"Trade TP{i+1} exécuté: Ticket {result.order}")
+                logger.info(f"[OK] Trade TP{i+1} execute: Ticket {result.order}")
             
             return True
             
         except Exception as e:
-            logger.error(f"Erreur exécution trade: {e}")
+            logger.error(f"Erreur execution trade: {e}")
             return False
     
     def _pre_trade_checks(self, setup: TradeSetup) -> bool:
@@ -860,7 +1037,7 @@ class TradingEngine:
         max_spread = self._get_max_spread(setup.symbol)
         
         if spread > max_spread:
-            logger.warning(f"Spread trop élevé: {spread}")
+            logger.warning(f"Spread trop eleve: {spread}")
             return False
         
         # 2. Vérifier les positions ouvertes
@@ -948,7 +1125,7 @@ class TradingEngine:
         
         if profit_pips >= be_activation and position.sl != position.price_open:
             self._modify_position(position.ticket, position.price_open, position.tp)
-            logger.info(f"Break-even appliqué sur position {position.ticket}")
+            logger.info(f"Break-even applique sur position {position.ticket}")
     
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
         """Modifie une position existante"""
@@ -969,13 +1146,14 @@ class ExpertAdvisor:
         self.symbols = config['symbols']  # ['BTCUSD', 'XAUUSD']
         self.timeframes = config['timeframes']  # ['H1', 'H4']
         self.mt5_credentials = config['mt5_credentials']
+        self.config = config  # Stocker la config complete pour Telegram
         
         self.trading_engine = TradingEngine(config)
         self.is_running = False
         
     def start(self):
         """Démarre l'EA"""
-        logger.info("Démarrage de l'Expert Advisor...")
+        logger.info("Demarrage de l'Expert Advisor...")
         self.is_running = True
         
         # Initialiser le gestionnaire de risque
@@ -992,7 +1170,7 @@ class ExpertAdvisor:
                 time.sleep(60)  # Attendre 1 minute entre les itérations
                 
             except KeyboardInterrupt:
-                logger.info("Arrêt demandé par l'utilisateur")
+                logger.info("Arret demande par l'utilisateur")
                 self.stop()
             except Exception as e:
                 logger.error(f"Erreur dans la boucle principale: {e}")
@@ -1020,8 +1198,9 @@ class ExpertAdvisor:
                 if setup:
                     # 4. Vérifier les conditions de filtrage additionnelles
                     if self.additional_filters(setup, analysis):
-                        # 5. Exécuter le trade
-                        self.trading_engine.execute_trade(setup)
+                        # 5. Exécuter le trade AVEC analysis, timeframe et config Telegram
+                        telegram_config = self.config.get('telegram', {})
+                        self.trading_engine.execute_trade(setup, analysis, timeframe, telegram_config)
         
         # 6. Gérer les positions ouvertes
         self.trading_engine.manage_open_positions()
@@ -1038,12 +1217,12 @@ class ExpertAdvisor:
         
         # Filtre de volatilité
         if analysis['atr'] < analysis['atr'] * 0.5:  # Volatilité trop basse
-            logger.info("Volatilité insuffisante")
+            logger.info("Volatilite insuffisante")
             return False
         
         # Filtre de tendance multiple timeframe
         if not self.confirm_multi_timeframe(setup.symbol, setup.direction):
-            logger.info("Tendance non confirmée sur timeframe supérieur")
+            logger.info("Tendance non confirmee sur timeframe superieur")
             return False
         
         return True
@@ -1078,12 +1257,10 @@ class ExpertAdvisor:
         """Arrête l'EA"""
         self.is_running = False
         mt5.shutdown()
-        logger.info("EA arrêté")
+        logger.info("EA arrete")
 
 # Configuration et exécution
 if __name__ == "__main__":
-    import os
-    
     config_path = "config.json"
     
     # Vérifier si le fichier de configuration existe
@@ -1121,6 +1298,12 @@ if __name__ == "__main__":
             'api_key': '***MASQUE***' if safe_config['news_api'].get('api_key') else 'N/A',
             'enabled': safe_config['news_api'].get('enabled', False)
         }
+    if 'telegram' in safe_config:
+        safe_config['telegram'] = {
+            'enabled': safe_config['telegram'].get('enabled', False),
+            'bot_token': '***MASQUE***' if safe_config['telegram'].get('bot_token') else 'N/A',
+            'chat_id': '***MASQUE***' if safe_config['telegram'].get('chat_id') else 'N/A'
+        }
     
     logger.info("=" * 50)
     logger.info("[CONFIG] Configuration chargee :")
@@ -1129,6 +1312,7 @@ if __name__ == "__main__":
     logger.info(f"  MT5 Login: {safe_config['mt5_credentials']['login']}")
     logger.info(f"  MT5 Server: {safe_config['mt5_credentials']['server']}")
     logger.info(f"  News API: {'Activee' if config.get('news_api', {}).get('enabled') else 'Desactivee'}")
+    logger.info(f"  Telegram: {'Active' if config.get('telegram', {}).get('enabled') else 'Desactive'}")
     logger.info("=" * 50)
     
     # Créer et démarrer l'EA
