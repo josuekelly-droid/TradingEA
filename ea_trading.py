@@ -1,7 +1,7 @@
 """
 Expert Advisor Professionnel - BTC/USD & Gold/USD
 Auteur: Trading System Pro
-Version: 3.2 - Optimise NewsAPI + Seuils Ajustes
+Version: 3.3 - Corrections execution + Seuil Test 0.25
 """
 
 import numpy as np
@@ -16,6 +16,7 @@ from concurrent.futures import ThreadPoolExecutor
 import json
 import time
 import os
+import traceback
 
 # Configuration du logging
 logging.basicConfig(
@@ -79,24 +80,20 @@ class NewsAnalyzer:
             ]
         }
         
-        # Cache optimise
         self.cache = {}
-        self.cache_duration = 1800  # 30 minutes
+        self.cache_duration = 1800
         self.daily_requests = 0
         self.max_daily_requests = 90
         self.last_reset = datetime.now().date()
         self.last_api_call = {}
-        self.min_interval = 900  # 15 minutes minimum
+        self.min_interval = 900
         
         logger.info(f"NewsAnalyzer initialise - API: {'Activee' if self.enabled else 'Desactivee'} | Cache: {self.cache_duration//60}min | Interval: {self.min_interval//60}min")
     
     def fetch_economic_calendar(self) -> pd.DataFrame:
-        """Recupere le calendrier economique (compatibilite)"""
         return pd.DataFrame()
     
     def fetch_news(self, symbol: str) -> pd.DataFrame:
-        """Recupere les news via NewsAPI.org - Optimise"""
-        
         if datetime.now().date() > self.last_reset:
             self.daily_requests = 0
             self.last_reset = datetime.now().date()
@@ -177,7 +174,6 @@ class NewsAnalyzer:
             return pd.DataFrame()
     
     def _get_source_score(self, source_name: str) -> float:
-        """Attribue un score de fiabilite aux sources"""
         high_quality = ['reuters', 'bloomberg', 'financial times', 'cnbc', 
                        'wall street journal', 'marketwatch', 'investing.com']
         medium_quality = ['coindesk', 'cointelegraph', 'fxstreet', 'dailyfx',
@@ -193,8 +189,6 @@ class NewsAnalyzer:
             return 1.0
     
     def analyze_news_impact(self, symbol: str) -> Dict:
-        """Analyse l'impact des news sur un symbole"""
-        
         if not self.enabled:
             return {
                 'impact_score': 0,
@@ -269,7 +263,6 @@ class ProfessionalIndicators:
     @staticmethod
     def calculate_supertrend(high: pd.Series, low: pd.Series, close: pd.Series, 
                            period: int = 10, multiplier: float = 3.0) -> pd.DataFrame:
-        """Calcule l'indicateur SuperTrend"""
         atr = ProfessionalIndicators.calculate_atr(high, low, close, period)
         
         hl2 = (high + low) / 2
@@ -303,7 +296,6 @@ class ProfessionalIndicators:
     
     @staticmethod
     def calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-        """Calcule l'ATR (Average True Range)"""
         tr1 = high - low
         tr2 = abs(high - close.shift())
         tr3 = abs(low - close.shift())
@@ -315,7 +307,6 @@ class ProfessionalIndicators:
     
     @staticmethod
     def calculate_ichimoku(high: pd.Series, low: pd.Series, close: pd.Series) -> Dict:
-        """Calcule l'indicateur Ichimoku Kinko Hyo"""
         period9_high = high.rolling(window=9).max()
         period9_low = low.rolling(window=9).min()
         tenkan_sen = (period9_high + period9_low) / 2
@@ -342,7 +333,6 @@ class ProfessionalIndicators:
     
     @staticmethod
     def calculate_rsi(close: pd.Series, period: int = 14) -> pd.Series:
-        """Calcule le RSI"""
         delta = close.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
@@ -354,7 +344,6 @@ class ProfessionalIndicators:
     
     @staticmethod
     def calculate_macd(close: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Dict:
-        """Calcule le MACD"""
         ema_fast = close.ewm(span=fast, adjust=False).mean()
         ema_slow = close.ewm(span=slow, adjust=False).mean()
         
@@ -370,7 +359,6 @@ class ProfessionalIndicators:
     
     @staticmethod
     def calculate_bollinger_bands(close: pd.Series, period: int = 20, std_dev: float = 2.0) -> Dict:
-        """Calcule les Bandes de Bollinger"""
         sma = close.rolling(window=period).mean()
         std = close.rolling(window=period).std()
         
@@ -387,7 +375,6 @@ class ProfessionalIndicators:
     @staticmethod
     def calculate_market_profile(high: pd.Series, low: pd.Series, close: pd.Series, 
                                 volume: pd.Series) -> Dict:
-        """Calcule le Market Profile pour identifier les zones de valeur"""
         price_range = pd.concat([high, low, close])
         price_bins = pd.cut(price_range, bins=50)
         
@@ -434,7 +421,6 @@ class SessionAnalyzer:
         }
     
     def get_current_session(self, timestamp: datetime) -> Dict:
-        """Determine la session actuelle"""
         hour = timestamp.hour
         
         for session_key, session_data in self.sessions.items():
@@ -448,14 +434,12 @@ class SessionAnalyzer:
         return {'session': None, 'name': 'No Session', 'is_active': False}
     
     def get_session_weight(self, symbol: str, session: str) -> float:
-        """Retourne le poids de la session pour un symbole donne"""
         if symbol in self.session_characteristics:
             if session in self.session_characteristics[symbol]:
                 return self.session_characteristics[symbol][session]['weight']
         return 1.0
     
     def is_high_impact_session(self, symbol: str, current_session: str) -> bool:
-        """Verifie si la session actuelle est a fort impact"""
         if symbol in self.session_characteristics:
             if current_session in self.session_characteristics[symbol]:
                 characteristics = self.session_characteristics[symbol][current_session]
@@ -474,7 +458,6 @@ class RiskManager:
         
     def calculate_position_size(self, entry_price: float, stop_loss: float, 
                                symbol: str) -> float:
-        """Calcule la taille de position basee sur le risque"""
         risk_amount = self.account_balance * (self.risk_percent / 100)
         stop_distance = abs(entry_price - stop_loss)
         
@@ -486,7 +469,6 @@ class RiskManager:
     
     def calculate_tp_levels(self, entry_price: float, direction: str, 
                            atr_value: float) -> List[float]:
-        """Calcule les 3 niveaux de Take Profit"""
         if direction == 'BUY':
             tp1 = entry_price + (atr_value * 1.5)
             tp2 = entry_price + (atr_value * 3.0)
@@ -500,7 +482,6 @@ class RiskManager:
     
     def calculate_stop_loss(self, entry_price: float, direction: str, 
                            atr_value: float, support_resistance: Dict) -> float:
-        """Calcule le Stop Loss intelligent"""
         atr_sl = atr_value * 2.0
         
         if direction == 'BUY':
@@ -513,7 +494,6 @@ class RiskManager:
         return dynamic_sl
     
     def _get_pip_value(self, symbol: str) -> float:
-        """Retourne la valeur du pip pour un symbole"""
         pip_values = {
             'BTCUSD': 1.0,
             'XAUUSD': 10.0
@@ -521,7 +501,6 @@ class RiskManager:
         return pip_values.get(symbol, 1.0)
     
     def _get_max_lot_size(self, symbol: str) -> float:
-        """Retourne la taille de lot maximale"""
         max_lots = {
             'BTCUSD': 1.0,
             'XAUUSD': 10.0
@@ -542,7 +521,6 @@ class TradingEngine:
         self.data_cache = {}
         
     def _initialize_mt5(self, credentials: Dict) -> bool:
-        """Initialise la connexion MT5"""
         if not credentials:
             logger.error("Credentials MT5 non fournis")
             return False
@@ -566,7 +544,6 @@ class TradingEngine:
     
     def fetch_market_data(self, symbol: str, timeframe: str, 
                          num_bars: int = 500) -> pd.DataFrame:
-        """Recupere les donnees de marche"""
         try:
             rates = mt5.copy_rates_from_pos(symbol, self._get_timeframe(timeframe), 
                                            0, num_bars)
@@ -585,7 +562,6 @@ class TradingEngine:
             return pd.DataFrame()
     
     def _get_timeframe(self, timeframe: str):
-        """Convertit le timeframe en constante MT5"""
         timeframes = {
             'M1': mt5.TIMEFRAME_M1,
             'M5': mt5.TIMEFRAME_M5,
@@ -598,8 +574,6 @@ class TradingEngine:
         return timeframes.get(timeframe, mt5.TIMEFRAME_H1)
     
     def analyze_market_conditions(self, symbol: str, data: pd.DataFrame) -> Dict:
-        """Analyse complete des conditions de marche"""
-        
         supertrend = self.indicators.calculate_supertrend(
             data['high'], data['low'], data['close'])
         
@@ -637,13 +611,11 @@ class TradingEngine:
                               ichimoku: Dict, rsi: pd.Series, macd: Dict,
                               bb: Dict, session: Dict, news: Dict,
                               symbol: str) -> Dict:
-        """Calcule le score de trading base sur tous les facteurs"""
         
         score = 0
         signals = []
         max_score = 10
         
-        # 1. Tendance SuperTrend (2 points)
         if supertrend['direction'].iloc[-1] == 1:
             score += 1
             signals.append("SuperTrend haussier")
@@ -651,7 +623,6 @@ class TradingEngine:
             score -= 1
             signals.append("SuperTrend baissier")
         
-        # 2. Ichimoku Cloud (2 points)
         if (ichimoku['tenkan_sen'].iloc[-1] > ichimoku['kijun_sen'].iloc[-1] and
             data['close'].iloc[-1] > ichimoku['senkou_span_a'].iloc[-1]):
             score += 2
@@ -661,7 +632,6 @@ class TradingEngine:
             score -= 2
             signals.append("Ichimoku baissier")
         
-        # 3. RSI (1 point)
         if 30 < rsi.iloc[-1] < 70:
             if rsi.iloc[-1] > 50:
                 score += 0.5
@@ -670,7 +640,6 @@ class TradingEngine:
                 score -= 0.5
                 signals.append("RSI momentum negatif")
         
-        # 4. MACD (1 point)
         if macd['histogram'].iloc[-1] > 0 and macd['histogram'].iloc[-1] > macd['histogram'].iloc[-2]:
             score += 1
             signals.append("MACD momentum haussier")
@@ -678,7 +647,6 @@ class TradingEngine:
             score -= 1
             signals.append("MACD momentum baissier")
         
-        # 5. Bollinger Bands (1 point)
         bb_position = (data['close'].iloc[-1] - bb['lower'].iloc[-1]) / (bb['upper'].iloc[-1] - bb['lower'].iloc[-1])
         if bb_position < 0.2:
             score += 1
@@ -687,7 +655,6 @@ class TradingEngine:
             score -= 1
             signals.append("Prix proche bande superieure BB")
         
-        # 6. Session de trading (2 points)
         session_weight = self.session_analyzer.get_session_weight(
             symbol, session['session'])
         if session['session'] == 'us':
@@ -697,7 +664,6 @@ class TradingEngine:
             score += 2.5 * session_weight
             signals.append("Overlap London-US")
         
-        # 7. Impact des news (1 point)
         if news['impact_score'] > 0:
             if news['bias'] == 'bullish':
                 score += 1
@@ -706,24 +672,19 @@ class TradingEngine:
                 score -= 1
                 signals.append("News baissieres")
         
-        # Normaliser le score
         normalized_score = max(-max_score, min(max_score, score))
         
         return {
             'total_score': normalized_score,
             'normalized_score': (normalized_score + max_score) / (2 * max_score),
-            # SEUIL AJUSTE : +/-1 au lieu de +/-2
             'direction': 'BUY' if normalized_score > 1 else 'SELL' if normalized_score < -1 else 'NEUTRAL',
             'signals': signals,
             'confidence': abs(normalized_score) / max_score
         }
     
     def generate_trade_setup(self, symbol: str, analysis: Dict) -> Optional[TradeSetup]:
-        """Genere un setup de trade complet"""
-        
         trade_score = analysis['trade_score']
         
-        # SEUIL AJUSTE : 0.35 au lieu de 0.60
         if trade_score['confidence'] < 0.25:
             logger.info(f"Score de confiance insuffisant pour {symbol}: {trade_score['confidence']:.2f}")
             return None
@@ -774,8 +735,10 @@ class TradingEngine:
         return setup
     
     def _find_support_resistance(self, symbol: str) -> Dict:
-        """Trouve les niveaux de support et resistance"""
         data = self.fetch_market_data(symbol, 'H1', 200)
+        
+        if data.empty:
+            return {'resistance': 0, 'support': 0}
         
         recent_high = data['high'].rolling(20).max().iloc[-1]
         recent_low = data['low'].rolling(20).min().iloc[-1]
@@ -786,7 +749,6 @@ class TradingEngine:
         }
     
     def _send_mt5_notification(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> str:
-        """Envoie une notification detaillee dans MT5 et les logs"""
         try:
             signals = analysis['trade_score']['signals']
             session = analysis['session']
@@ -859,7 +821,6 @@ class TradingEngine:
             return f"EA_Pro|{setup.direction}|{setup.symbol}"
     
     def _send_telegram_alert(self, setup: TradeSetup, analysis: Dict, timeframe: str, telegram_config: Dict):
-        """Envoie une alerte Telegram detaillee"""
         try:
             if not telegram_config.get('enabled', False):
                 return
@@ -868,7 +829,6 @@ class TradingEngine:
             chat_id = telegram_config.get('chat_id', '')
             
             if not bot_token or not chat_id:
-                logger.warning("[TELEGRAM] Configuration incomplete, alerte non envoyee")
                 return
             
             signals = analysis['trade_score']['signals']
@@ -945,31 +905,50 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             if analysis and telegram_config:
                 self._send_telegram_alert(setup, analysis, timeframe, telegram_config)
             
+            # Infos du symbole pour les decimales
+            symbol_info = mt5.symbol_info(setup.symbol)
+            if symbol_info is None:
+                logger.error(f"Impossible d'obtenir les infos pour {setup.symbol}")
+                return False
+            digits = symbol_info.digits
+            
+            # Tick pour le prix reel
+            tick = mt5.symbol_info_tick(setup.symbol)
+            if tick is None:
+                logger.error(f"Impossible d'obtenir le tick pour {setup.symbol}")
+                return False
+            
             for i, (tp_price, lot) in enumerate(zip(
                 [setup.tp1_price, setup.tp2_price, setup.tp3_price],
                 setup.lot_sizes)):
                 
                 order_type = mt5.ORDER_TYPE_BUY if setup.direction == 'BUY' else mt5.ORDER_TYPE_SELL
+                price = tick.ask if setup.direction == 'BUY' else tick.bid
                 
                 request = {
                     "action": mt5.TRADE_ACTION_DEAL,
                     "symbol": setup.symbol,
-                    "volume": lot,
+                    "volume": float(lot),
                     "type": order_type,
-                    "price": setup.entry_price,
-                    "sl": setup.sl_price,
-                    "tp": tp_price,
+                    "price": round(price, digits),
+                    "sl": round(float(setup.sl_price), digits),
+                    "tp": round(float(tp_price), digits),
                     "deviation": 20,
                     "magic": 123456,
                     "comment": f"{mt5_comment}|TP{i+1}",
                     "type_time": mt5.ORDER_TIME_GTC,
-                    "type_filling": mt5.ORDER_FILLING_IOC,
+                    "type_filling": mt5.ORDER_FILLING_FOK,
                 }
                 
                 result = mt5.order_send(request)
                 
+                if result is None:
+                    logger.error(f"Erreur execution trade TP{i+1}: resultat None")
+                    logger.error(f"MT5 Last Error: {mt5.last_error()}")
+                    return False
+                
                 if result.retcode != mt5.TRADE_RETCODE_DONE:
-                    logger.error(f"Erreur execution trade TP{i+1}: {result.comment}")
+                    logger.error(f"Erreur execution trade TP{i+1}: {result.comment} (code: {result.retcode})")
                     return False
                 
                 logger.info(f"[OK] Trade TP{i+1} execute: Ticket {result.order}")
@@ -978,11 +957,10 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             
         except Exception as e:
             logger.error(f"Erreur execution trade: {e}")
+            traceback.print_exc()
             return False
     
     def _pre_trade_checks(self, setup: TradeSetup) -> bool:
-        """Verifications pre-trade"""
-        
         tick = mt5.symbol_info_tick(setup.symbol)
         if tick is None:
             return False
@@ -995,6 +973,8 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             return False
         
         positions = mt5.positions_get(symbol=setup.symbol)
+        if positions is None:
+            positions = []
         if len(positions) >= self.risk_manager.max_positions:
             logger.warning("Nombre maximum de positions atteint")
             return False
@@ -1005,7 +985,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         return True
     
     def _get_max_spread(self, symbol: str) -> float:
-        """Retourne le spread maximum acceptable"""
         spreads = {
             'BTCUSD': 50.0,
             'XAUUSD': 3.0
@@ -1013,15 +992,12 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         return spreads.get(symbol, 10.0)
     
     def _check_risk_exposure(self, setup: TradeSetup) -> bool:
-        """Verifie l'exposition au risque"""
         account_info = mt5.account_info()
         if account_info is None:
             return False
-        
         return True
     
     def manage_open_positions(self):
-        """Gere les positions ouvertes (trailing stop, break-even, etc.)"""
         positions = mt5.positions_get()
         
         if positions is None:
@@ -1031,7 +1007,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             self._manage_single_position(position)
     
     def _manage_single_position(self, position):
-        """Gere une position individuelle"""
         symbol = position.symbol
         tick = mt5.symbol_info_tick(symbol)
         
@@ -1050,7 +1025,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         self._apply_break_even(position, current_price, profit_pips)
     
     def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
-        """Applique un trailing stop"""
         symbol = position.symbol
         activation_pips = 50
         trailing_distance = 30
@@ -1066,7 +1040,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
                     self._modify_position(position.ticket, new_sl, position.tp)
     
     def _apply_break_even(self, position, current_price: float, profit_pips: float):
-        """Applique le break-even"""
         be_activation = 30
         
         if profit_pips >= be_activation and position.sl != position.price_open:
@@ -1074,7 +1047,6 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
             logger.info(f"Break-even applique sur position {position.ticket}")
     
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
-        """Modifie une position existante"""
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "position": ticket,
@@ -1083,7 +1055,7 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         }
         
         result = mt5.order_send(request)
-        return result.retcode == mt5.TRADE_RETCODE_DONE
+        return result.retcode == mt5.TRADE_RETCODE_DONE if result else False
 
 class ExpertAdvisor:
     """Classe principale de l'Expert Advisor"""
@@ -1098,7 +1070,6 @@ class ExpertAdvisor:
         self.is_running = False
         
     def start(self):
-        """Demarre l'EA"""
         logger.info("Demarrage de l'Expert Advisor...")
         self.is_running = True
         
@@ -1121,7 +1092,6 @@ class ExpertAdvisor:
                 time.sleep(300)
     
     def run_iteration(self):
-        """Execute une iteration de l'EA"""
         for symbol in self.symbols:
             for timeframe in self.timeframes:
                 data = self.trading_engine.fetch_market_data(
@@ -1144,9 +1114,7 @@ class ExpertAdvisor:
         self.trading_engine.manage_open_positions()
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
-        """Filtres additionnels specifiques a l'EA"""
-        
-        # SEUIL AJUSTE : 0.50 au lieu de 0.85
+        # Filtre session desactive pour test
         # if analysis['session']['session'] not in ['us', 'overlap_london_us']:
         #     if analysis['trade_score']['confidence'] < 0.50:
         #         logger.info("Trade hors session US avec confiance insuffisante")
@@ -1163,7 +1131,6 @@ class ExpertAdvisor:
         return True
     
     def confirm_multi_timeframe(self, symbol: str, direction: str) -> bool:
-        """Confirme la tendance sur un timeframe superieur"""
         higher_tf_data = self.trading_engine.fetch_market_data(
             symbol, 'H4', 100)
         
@@ -1188,7 +1155,6 @@ class ExpertAdvisor:
             return close < cloud_bottom
     
     def stop(self):
-        """Arrete l'EA"""
         self.is_running = False
         mt5.shutdown()
         logger.info("EA arrete")
