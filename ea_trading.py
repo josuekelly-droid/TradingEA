@@ -1004,29 +1004,44 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         self._apply_trailing_stop(position, current_price, profit_pips)
         self._apply_break_even(position, current_price, profit_pips)
     
-    def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
+        def _apply_trailing_stop(self, position, current_price: float, profit_pips: float):
+        """Applique un trailing stop - Active a 150 pips"""
         symbol = position.symbol
-        activation_pips = 50
-        trailing_distance = 30
+        activation_pips = 150
+        trailing_distance = 50
         
         if profit_pips >= activation_pips:
-            if position.type == 0:
-                new_sl = current_price - (trailing_distance * mt5.symbol_info(symbol).point)
+            point = mt5.symbol_info(symbol).point
+            if position.type == 0:  # BUY
+                new_sl = current_price - (trailing_distance * point)
                 if new_sl > position.sl:
                     self._modify_position(position.ticket, new_sl, position.tp)
-            else:
-                new_sl = current_price + (trailing_distance * mt5.symbol_info(symbol).point)
+                    logger.info(f"Trailing stop applique sur {position.ticket} a {new_sl}")
+            else:  # SELL
+                new_sl = current_price + (trailing_distance * point)
                 if new_sl < position.sl or position.sl == 0:
                     self._modify_position(position.ticket, new_sl, position.tp)
+                    logger.info(f"Trailing stop applique sur {position.ticket} a {new_sl}")
     
     def _apply_break_even(self, position, current_price: float, profit_pips: float):
-        be_activation = 30
+        """Applique le break-even en positif (+10 pips) a 150 pips de profit"""
+        symbol = position.symbol
+        be_activation = 150
+        be_positive_offset = 10
         
-        if profit_pips >= be_activation and position.sl != position.price_open:
-            self._modify_position(position.ticket, position.price_open, position.tp)
-            logger.info(f"Break-even applique sur position {position.ticket}")
+        if profit_pips >= be_activation:
+            point = mt5.symbol_info(symbol).point
+            if position.type == 0:  # BUY
+                new_sl = position.price_open + (be_positive_offset * point)
+            else:  # SELL
+                new_sl = position.price_open - (be_positive_offset * point)
+            
+            if new_sl != position.sl:
+                self._modify_position(position.ticket, new_sl, position.tp)
+                logger.info(f"Break-even +{be_positive_offset} pips applique sur {position.ticket}")
     
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
+        """Modifie une position existante"""
         request = {
             "action": mt5.TRADE_ACTION_SLTP,
             "position": ticket,
@@ -1035,7 +1050,9 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
         }
         
         result = mt5.order_send(request)
-        return result.retcode == mt5.TRADE_RETCODE_DONE if result else False
+        if result is None:
+            return False
+        return result.retcode == mt5.TRADE_RETCODE_DONE
 
 class ExpertAdvisor:
     """Classe principale de l'Expert Advisor"""
