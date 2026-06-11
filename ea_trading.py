@@ -1107,7 +1107,7 @@ class ExpertAdvisor:
         
         # Filtre de session US
         if analysis['session']['session'] not in ['us', 'overlap_london_us']:
-          if analysis['trade_score']['confidence'] < 0.85:
+          if analysis['trade_score']['confidence'] < 0.60:
             logger.info("Trade hors session US avec confiance insuffisante")
             return False
         
