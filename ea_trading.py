@@ -661,7 +661,7 @@ class TradingEngine:
     def generate_trade_setup(self, symbol: str, analysis: Dict) -> Optional[TradeSetup]:
         trade_score = analysis['trade_score']
         
-        if trade_score['confidence'] < 0.60:
+        if trade_score['confidence'] < 0.50:
             logger.info(f"Score de confiance insuffisant pour {symbol}: {trade_score['confidence']:.2f}")
             return None
         
