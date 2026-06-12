@@ -661,7 +661,7 @@ class TradingEngine:
     def generate_trade_setup(self, symbol: str, analysis: Dict) -> Optional[TradeSetup]:
         trade_score = analysis['trade_score']
         
-        if trade_score['confidence'] < 0.30:
+        if trade_score['confidence'] < 0.60:
             logger.info(f"Score de confiance insuffisant pour {symbol}: {trade_score['confidence']:.2f}")
             return None
         
@@ -1107,7 +1107,7 @@ class ExpertAdvisor:
         
         # Filtre de session US
         if analysis['session']['session'] not in ['us', 'overlap_london_us']:
-          if analysis['trade_score']['confidence'] < 0.20:
+          if analysis['trade_score']['confidence'] < 0.70:
             logger.info("Trade hors session US avec confiance insuffisante")
             return False
         
