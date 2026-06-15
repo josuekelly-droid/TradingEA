@@ -959,7 +959,7 @@ Risque: {risk_amount:.2f}$ ({self.risk_manager.risk_percent if self.risk_manager
     
     def _get_max_spread(self, symbol: str) -> float:
         spreads = {
-            'BTCUSD': 50.0,
+            'BTCUSD': 100.0,
             'XAUUSD': 5.0
         }
         return spreads.get(symbol, 10.0)
