@@ -102,8 +102,13 @@ class MT5EconomicCalendar:
                 logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
                 return True
                 
-        except json.JSONDecodeError:
-            logger.error(f"[CALENDRIER] Erreur de lecture JSON dans {self.lock_file}")
+        except json.JSONDecodeError as e:
+            logger.error(f"[CALENDRIER] JSON invalide, réinitialisation: {e}")
+            try:
+                with open(self.lock_file, 'w') as f:
+                    json.dump({"blackout": False, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}, f)
+            except:
+                pass
         except Exception as e:
             logger.error(f"[CALENDRIER] Erreur: {e}")
             
@@ -394,7 +399,12 @@ Prix d'entrée: {setup.entry_price:.2f}
             return True
             
         info = mt5.symbol_info(setup.symbol)
-        filling = mt5.ORDER_FILLING_FOK if (info.filling_mode & mt5.SYMBOL_FILLING_FOK) else mt5.ORDER_FILLING_IOC
+        if info is None: return False
+        
+        try:
+            filling = mt5.ORDER_FILLING_FOK if (info.filling_mode & mt5.SYMBOL_FILLING_FOK) else mt5.ORDER_FILLING_IOC
+        except:
+            filling = mt5.ORDER_FILLING_IOC
         
         for i, (tp, lot) in enumerate(zip([setup.tp1_price, setup.tp2_price, setup.tp3_price], setup.lot_sizes)):
             order_type = mt5.ORDER_TYPE_BUY if setup.direction == 'BUY' else mt5.ORDER_TYPE_SELL
