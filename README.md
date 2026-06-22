@@ -54,15 +54,16 @@ This Expert Advisor implements a multi-timeframe trend-following strategy using 
 2. Install dependencies:
    ```bash
    pip install numpy pandas requests MetaTrader5
+Configure config.json with your MT5 credentials
 
+Launch the EA:
 
-3. Configure config.json with your MT5 credentials
-4. Launch the EA:
+bash
 python ea_trading.py
-
 Configuration
 Edit config.json to customize all parameters:
 
+json
 {
   "test_mode": false,
   "symbols": ["BTCUSD", "XAUUSD"],
@@ -122,8 +123,6 @@ Edit config.json to customize all parameters:
     "chat_id": "YOUR_CHAT_ID"
   }
 }
-
-
 Economic Calendar Setup
 The EA uses a native MT5 economic calendar via an external MQL5 script:
 
@@ -137,8 +136,8 @@ The Python EA reads this file to detect high-impact news events
 
 Trading is blocked 30 minutes before and after FED/NFP events
 
-Architecture //
-
+Architecture
+text
 ea_trading.py          # Main EA (Python)
 ├── MT5EconomicCalendar  # News filter via MQL5 bridge
 ├── NewsAnalyzer         # News sentiment (disabled by default)
@@ -151,8 +150,6 @@ ea_trading.py          # Main EA (Python)
 CalendarFilter.mq5     # MQL5 script for economic calendar
 config.json            # All configuration parameters
 ea_trading.log         # Execution logs
-
-
 Scoring System
 Indicator	Weight	Signal
 SuperTrend	±2.0	Trend direction
@@ -161,6 +158,7 @@ RSI	±1.0	Above/below 50
 MACD	±1.5	Histogram direction
 Session	+2.0×	Session weight (US: 1.5, London: 1.0)
 Direction threshold: Score > +2 → BUY, Score < -2 → SELL
+
 Confidence threshold: 60% minimum to generate trade
 
 Position Management Flow
@@ -186,10 +184,10 @@ Graceful shutdown on keyboard interrupt
 Logs
 Logs are written to both console and ea_trading.log file with the following format:
 
+text
 2026-06-22 19:31:30,485 - INFO - [OK] Trade TP1 executed: Ticket 733209906
-
-Telegram Notification Example:
-
+Telegram Notification Example
+text
 📊 [EA PRO] TRADE OUVERT - 2026-06-22 19:42:47
 
 XAUUSD | BUY | Timeframe: H1
@@ -206,10 +204,8 @@ Prix d'entrée: 4180.71
 💰 Risque: 40126.24€ (1.0%)
 
 📈 Signaux: ST Haussier, Ich Haussier
-
-
-Files Structure //
-
+Files Structure
+text
 C:\TradingEA\
 ├── ea_trading.py          # Main EA script
 ├── config.json            # Configuration file
@@ -218,8 +214,6 @@ C:\TradingEA\
 ├── news_lock.json         # Bridge file (auto-generated)
 ├── ea_trading.log         # Execution log
 └── README.md              # This file
-
-
 Disclaimer
 This software is for educational purposes. Trading involves substantial risk of loss. Past performance does not guarantee future results. Test thoroughly on demo accounts before live deployment.
 
