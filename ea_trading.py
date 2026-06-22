@@ -8,7 +8,7 @@ Version: 6.0 - Institutional Grade
 - Rapport quotidien automatique (23h00)
 - Réconciliation des positions au démarrage
 - Notifications Telegram (intégrées)
-- Calendrier économique MT5 corrigé (calendar_get)
+- Calendrier économique ForexFactory (gratuit, sans clé API)
 """
 
 import numpy as np
@@ -24,7 +24,6 @@ import time
 import os
 import traceback
 
-# Configuration du logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
@@ -35,7 +34,6 @@ logging.basicConfig(
 )
 logger = logging.getLogger(__name__)
 
-# Constante globale pour le Magic Number
 MAGIC_NUMBER = 123456
 
 @dataclass
@@ -52,47 +50,80 @@ class TradeSetup:
     timestamp: datetime
 
 class MT5EconomicCalendar:
-    def __init__(self, minutes_before: int = 30, minutes_after: int = 30):
+    """
+    Filtre de news via l'API JSON gratuite de ForexFactory.
+    Récupère les événements à fort impact de la semaine.
+    """
+    def __init__(self, lock_file: str = "news_lock.json", minutes_before: int = 30, minutes_after: int = 30):
         self.minutes_before = minutes_before
         self.minutes_after = minutes_after
         self.enabled = True
+        self.cache = []
+        self.last_fetch = 0
         
-    def is_blackout_period(self, symbol: str) -> bool:
-        if not self.enabled: return False
-        try:
-            now = datetime.now()
-            # CORRECTION : calendar_events → calendar_get (fonction Python MT5 correcte)
-            events = mt5.calendar_get(now - timedelta(hours=2), now + timedelta(hours=2))
-            if events is None or len(events) == 0: return False
+    def _get_events(self):
+        now = time.time()
+        if now - self.last_fetch < 300 and self.cache:
+            return self.cache
             
-            for event in events:
-                # calendar_get retourne des tuples : (time, name, country, importance, ...)
-                event_time = datetime.fromtimestamp(event[0]) if event[0] else now
-                event_name = event[1] if len(event) > 1 else "Inconnu"
-                importance = event[3] if len(event) > 3 else 0
-                
-                if importance >= 3:  # 3 = High Impact
-                    time_diff = (now - event_time).total_seconds() / 60
-                    if -self.minutes_before <= time_diff < 0:
-                        logger.warning(f"[NEWS BLACKOUT] Event {event_name} imminent. Trading suspendu.")
-                        return True
-                    elif 0 <= time_diff < self.minutes_after:
-                        logger.warning(f"[NEWS BLACKOUT] Event {event_name} en cours. Trading suspendu.")
-                        return True
+        try:
+            url = "https://cdn-nfs.forexfactory.com/ff-calendar-thisweek.json"
+            resp = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
+            if resp.status_code == 200:
+                self.cache = resp.json()
+                self.last_fetch = now
+                return self.cache
         except Exception as e:
-            logger.error(f"Erreur calendrier économique: {e}")
+            logger.error(f"[CALENDRIER] Erreur récupération ForexFactory: {e}")
+        return self.cache
+
+    def is_blackout_period(self, symbol: str) -> bool:
+        if not self.enabled:
+            return False
+        
+        try:
+            events = self._get_events()
+            now = datetime.now()
+            
+            for evt in events:
+                if len(evt) < 6:
+                    continue
+                    
+                impact = evt[5] if len(evt) > 5 else ""
+                if impact != "High":
+                    continue
+                    
+                date_str = evt[3] if len(evt) > 3 else ""
+                time_str = evt[4] if len(evt) > 4 else ""
+                
+                if not date_str or not time_str:
+                    continue
+                    
+                try:
+                    et = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
+                    diff = (now - et).total_seconds() / 60
+                    
+                    if -self.minutes_before <= diff <= self.minutes_after:
+                        name = evt[1] if len(evt) > 1 else "Inconnu"
+                        logger.warning(f"[NEWS BLACKOUT] {name} ({diff:.0f} min)")
+                        return True
+                except:
+                    pass
+                    
+        except Exception as e:
+            logger.error(f"[CALENDRIER] Erreur: {e}")
+            
         return False
 
 class NewsAnalyzer:
     def __init__(self, config: Dict = None):
         self.enabled = config.get('enabled', False) if isinstance(config, dict) else False
         
-        # Alerte explicite au démarrage
         if not self.enabled:
             logger.warning("="*60)
             logger.warning("[ATTENTION] L'ANALYSE DES NEWS EST DÉSACTIVÉE !")
             logger.warning("L'EA ne prendra pas en compte le sentiment du marché.")
-            logger.warning("Le filtre du calendrier MT5 (FED/NFP) reste actif.")
+            logger.warning("Filtre news : ForexFactory (High Impact uniquement).")
             logger.warning("="*60)
             
     def analyze_news_impact(self, symbol: str) -> Dict:
@@ -303,23 +334,17 @@ class TradingEngine:
         tick = mt5.symbol_info_tick(setup.symbol)
         if tick is None: return False
         
-        # 1. Vérification stricte du Spread
         spread = tick.ask - tick.bid
         max_spread = self.config.get('risk_management', {}).get('max_spread', {}).get(setup.symbol, 10.0)
         if spread > max_spread:
             logger.warning(f"Spread trop élevé pour {setup.symbol}: {spread} > {max_spread}")
             return False
             
-        # 2. Vérification des trades journaliers
         if self.risk_manager.is_max_trades_reached(): return False
         
         return True
 
-    # ──────────────────────────────────────────────────────────────
-    # NOUVEAU : Méthode d'envoi de notification Telegram
-    # ──────────────────────────────────────────────────────────────
     def _send_telegram_alert(self, setup: TradeSetup, analysis: Dict, timeframe: str):
-        """Envoie une notification Telegram après exécution réussie d'un trade"""
         telegram_config = self.config.get('telegram', {})
         if not telegram_config.get('enabled', False):
             return
@@ -331,7 +356,6 @@ class TradingEngine:
                 logger.warning("[TELEGRAM] Token ou Chat ID manquant dans config.json")
                 return
             
-            # Construction du message
             signals = ', '.join(analysis['trade_score']['signals'])
             risk_amount = self.risk_manager.account_balance * (self.risk_manager.risk_percent / 100) if self.risk_manager else 0
             session = analysis.get('session', 'Inconnue')
@@ -356,11 +380,7 @@ Prix d'entrée: {setup.entry_price:.2f}
             """
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
-            params = {
-                'chat_id': chat_id,
-                'text': message.strip()
-            }
-            
+            params = {'chat_id': chat_id, 'text': message.strip()}
             response = requests.post(url, params=params, timeout=10)
             
             if response.status_code == 200:
@@ -370,17 +390,12 @@ Prix d'entrée: {setup.entry_price:.2f}
                 
         except Exception as e:
             logger.error(f"[TELEGRAM] Erreur lors de l'envoi: {e}")
-            # Ne pas bloquer le trade si Telegram échoue
-    # ──────────────────────────────────────────────────────────────
-    # FIN NOUVEAU
-    # ──────────────────────────────────────────────────────────────
     
     def execute_trade(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> bool:
         if not self._pre_trade_checks(setup): return False
         
         if self.test_mode:
             logger.info(f"[TEST MODE] Trade simulé: {setup.symbol} {setup.direction} Prix: {setup.entry_price}")
-            # Même en test mode, on envoie la notification
             self._send_telegram_alert(setup, analysis, timeframe)
             return True
             
@@ -402,9 +417,7 @@ Prix d'entrée: {setup.entry_price:.2f}
                 logger.error(f"Erreur exécution TP{i+1}: {mt5.last_error()}"); return False
             logger.info(f"[OK] Trade TP{i+1} exécuté: Ticket {res.order}")
         
-        # NOTIFICATION TELEGRAM APRÈS EXÉCUTION RÉUSSIE
         self._send_telegram_alert(setup, analysis, timeframe)
-        
         return True
     
     def manage_open_positions(self):
@@ -426,16 +439,14 @@ Prix d'entrée: {setup.entry_price:.2f}
             curr_price = tick.bid if pos.type == 0 else tick.ask
             profit = (curr_price - pos.price_open) if pos.type == 0 else (pos.price_open - curr_price)
                 
-            # Trailing Stop Dynamique
             if profit >= atr * trail_act:
-                if pos.type == 0: # BUY
+                if pos.type == 0:
                     new_sl = curr_price - (atr * trail_dist)
                     if new_sl > pos.sl: self._modify_position(pos.ticket, new_sl, pos.tp)
-                else: # SELL
+                else:
                     new_sl = curr_price + (atr * trail_dist)
                     if pos.sl == 0 or new_sl < pos.sl: self._modify_position(pos.ticket, new_sl, pos.tp)
             
-            # Break-Even Dynamique
             if profit >= atr * be_act:
                 if pos.type == 0: new_sl = pos.price_open + (atr * be_off)
                 else: new_sl = pos.price_open - (atr * be_off)
@@ -466,7 +477,6 @@ class ExpertAdvisor:
         
         self.trading_engine.risk_manager = RiskManager(acc.balance, self.config.get('risk_management', {}), self.config.get('tp_sl_settings', {}))
         
-        # 7. Réconciliation au démarrage (Force la mise à jour de toutes les positions)
         logger.info("Réconciliation des positions ouvertes au démarrage...")
         self.trading_engine.manage_open_positions()
         
@@ -475,19 +485,15 @@ class ExpertAdvisor:
         
         while self.is_running:
             try:
-                # 6. Rapport Quotidien à 23h00
                 self._generate_daily_report()
                 
-                # Vérification connexion toutes les 5 min
                 if time.time() - last_conn_check > 300:
                     if not self.trading_engine.check_connection():
                         time.sleep(60); continue
                     last_conn_check = time.time()
                 
-                # Gestion des positions à chaque boucle
                 self.trading_engine.manage_open_positions()
                 
-                # Analyse (Uniquement à la nouvelle bougie)
                 for symbol in self.symbols:
                     for tf in self.timeframes:
                         tf_map = {'H1': mt5.TIMEFRAME_H1, 'H4': mt5.TIMEFRAME_H4}
@@ -508,10 +514,9 @@ class ExpertAdvisor:
     def run_iteration_for_symbol(self, symbol: str, timeframe: str):
         if self.trading_engine.risk_manager.is_daily_loss_limit_reached(): return
         
-        # 1. Verrouillage par Symbole (Anti-Hedging H1/H4)
         positions = mt5.positions_get(symbol=symbol, magic=MAGIC_NUMBER)
         if positions and len(positions) > 0:
-            return # On a déjà un setup actif sur ce symbole, on bloque
+            return
             
         data = self.trading_engine.fetch_market_data(symbol, timeframe, 500)
         if data.empty: return
@@ -520,7 +525,6 @@ class ExpertAdvisor:
         setup = self.trading_engine.generate_trade_setup(symbol, analysis)
         
         if setup and self.additional_filters(setup, analysis):
-            # MODIFIÉ : passage de 'analysis' en plus
             self.trading_engine.execute_trade(setup, analysis, timeframe)
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
