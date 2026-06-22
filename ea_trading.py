@@ -89,26 +89,38 @@ class MT5EconomicCalendar:
             if not os.path.exists(self.lock_file):
                 self.enabled = False
                 return False
-                
-            file_age = time.time() - os.path.getmtime(self.lock_file)
-            if file_age > 120:
-                logger.warning(f"[CALENDRIER] Fichier pas mis à jour depuis {file_age:.0f}s")
-                return False
             
-            with open(self.lock_file, 'r') as f:
-                data = json.load(f)
-            
-            if data.get('blackout', False):
-                logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
-                return True
+            # Réessayer jusqu'à 3 fois si le fichier est vide (écriture MQL5 en cours)
+            for attempt in range(3):
+                if os.path.getsize(self.lock_file) == 0:
+                    if attempt < 2:
+                        time.sleep(0.5)
+                        continue
+                    return False
                 
-        except json.JSONDecodeError as e:
-            logger.error(f"[CALENDRIER] JSON invalide, réinitialisation: {e}")
-            try:
-                with open(self.lock_file, 'w') as f:
-                    json.dump({"blackout": False, "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")}, f)
-            except:
-                pass
+                with open(self.lock_file, 'r') as f:
+                    content = f.read().strip()
+                    if not content:
+                        if attempt < 2:
+                            time.sleep(0.5)
+                            continue
+                        return False
+                    
+                    data = json.loads(content)
+                    
+                    file_age = time.time() - os.path.getmtime(self.lock_file)
+                    if file_age > 120:
+                        logger.warning(f"[CALENDRIER] Fichier pas mis à jour depuis {file_age:.0f}s")
+                        return False
+                    
+                    if data.get('blackout', False):
+                        logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
+                        return True
+                    
+                    return False
+                
+        except json.JSONDecodeError:
+            pass
         except Exception as e:
             logger.error(f"[CALENDRIER] Erreur: {e}")
             
