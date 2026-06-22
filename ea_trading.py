@@ -7,6 +7,8 @@ Version: 6.0 - Institutional Grade
 - Contrôle du spread et Limite de trades journaliers
 - Rapport quotidien automatique (23h00)
 - Réconciliation des positions au démarrage
+- Notifications Telegram (intégrées)
+- Calendrier économique MT5 corrigé (calendar_get)
 """
 
 import numpy as np
@@ -59,13 +61,24 @@ class MT5EconomicCalendar:
         if not self.enabled: return False
         try:
             now = datetime.now()
-            events = mt5.calendar_events(now - timedelta(hours=2), now + timedelta(hours=2))
-            if events is None: return False
+            # CORRECTION : calendar_events → calendar_get (fonction Python MT5 correcte)
+            events = mt5.calendar_get(now - timedelta(hours=2), now + timedelta(hours=2))
+            if events is None or len(events) == 0: return False
+            
             for event in events:
-                if event.importance == 3:
-                    time_diff = (now - event.time).total_seconds() / 60
-                    if -self.minutes_before <= time_diff < 0: return True
-                    elif 0 <= time_diff < self.minutes_after: return True
+                # calendar_get retourne des tuples : (time, name, country, importance, ...)
+                event_time = datetime.fromtimestamp(event[0]) if event[0] else now
+                event_name = event[1] if len(event) > 1 else "Inconnu"
+                importance = event[3] if len(event) > 3 else 0
+                
+                if importance >= 3:  # 3 = High Impact
+                    time_diff = (now - event_time).total_seconds() / 60
+                    if -self.minutes_before <= time_diff < 0:
+                        logger.warning(f"[NEWS BLACKOUT] Event {event_name} imminent. Trading suspendu.")
+                        return True
+                    elif 0 <= time_diff < self.minutes_after:
+                        logger.warning(f"[NEWS BLACKOUT] Event {event_name} en cours. Trading suspendu.")
+                        return True
         except Exception as e:
             logger.error(f"Erreur calendrier économique: {e}")
         return False
@@ -301,12 +314,74 @@ class TradingEngine:
         if self.risk_manager.is_max_trades_reached(): return False
         
         return True
+
+    # ──────────────────────────────────────────────────────────────
+    # NOUVEAU : Méthode d'envoi de notification Telegram
+    # ──────────────────────────────────────────────────────────────
+    def _send_telegram_alert(self, setup: TradeSetup, analysis: Dict, timeframe: str):
+        """Envoie une notification Telegram après exécution réussie d'un trade"""
+        telegram_config = self.config.get('telegram', {})
+        if not telegram_config.get('enabled', False):
+            return
+        
+        try:
+            bot_token = telegram_config.get('bot_token', '')
+            chat_id = telegram_config.get('chat_id', '')
+            if not bot_token or not chat_id:
+                logger.warning("[TELEGRAM] Token ou Chat ID manquant dans config.json")
+                return
+            
+            # Construction du message
+            signals = ', '.join(analysis['trade_score']['signals'])
+            risk_amount = self.risk_manager.account_balance * (self.risk_manager.risk_percent / 100) if self.risk_manager else 0
+            session = analysis.get('session', 'Inconnue')
+            
+            message = f"""
+📊 [EA PRO] TRADE OUVERT - {setup.timestamp.strftime('%Y-%m-%d %H:%M:%S')}
+
+{setup.symbol} | {setup.direction} | Timeframe: {timeframe}
+Session: {session}
+Prix d'entrée: {setup.entry_price:.2f}
+
+🛑 Stop Loss: {setup.sl_price:.2f}
+🎯 TP1: {setup.tp1_price:.2f}
+🎯 TP2: {setup.tp2_price:.2f}
+🎯 TP3: {setup.tp3_price:.2f}
+
+📦 Lots: {setup.lot_sizes[0]:.3f} / {setup.lot_sizes[1]:.3f} / {setup.lot_sizes[2]:.3f}
+✅ Confiance: {setup.confidence:.1%}
+💰 Risque: {risk_amount:.2f}€ ({self.risk_manager.risk_percent if self.risk_manager else 1.0}%)
+
+📈 Signaux: {signals}
+            """
+            
+            url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
+            params = {
+                'chat_id': chat_id,
+                'text': message.strip()
+            }
+            
+            response = requests.post(url, params=params, timeout=10)
+            
+            if response.status_code == 200:
+                logger.info("[TELEGRAM] Notification envoyée avec succès")
+            else:
+                logger.warning(f"[TELEGRAM] Erreur envoi: {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            logger.error(f"[TELEGRAM] Erreur lors de l'envoi: {e}")
+            # Ne pas bloquer le trade si Telegram échoue
+    # ──────────────────────────────────────────────────────────────
+    # FIN NOUVEAU
+    # ──────────────────────────────────────────────────────────────
     
-    def execute_trade(self, setup: TradeSetup, timeframe: str) -> bool:
+    def execute_trade(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> bool:
         if not self._pre_trade_checks(setup): return False
         
         if self.test_mode:
             logger.info(f"[TEST MODE] Trade simulé: {setup.symbol} {setup.direction} Prix: {setup.entry_price}")
+            # Même en test mode, on envoie la notification
+            self._send_telegram_alert(setup, analysis, timeframe)
             return True
             
         info = mt5.symbol_info(setup.symbol)
@@ -326,6 +401,10 @@ class TradingEngine:
             if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
                 logger.error(f"Erreur exécution TP{i+1}: {mt5.last_error()}"); return False
             logger.info(f"[OK] Trade TP{i+1} exécuté: Ticket {res.order}")
+        
+        # NOTIFICATION TELEGRAM APRÈS EXÉCUTION RÉUSSIE
+        self._send_telegram_alert(setup, analysis, timeframe)
+        
         return True
     
     def manage_open_positions(self):
@@ -441,7 +520,8 @@ class ExpertAdvisor:
         setup = self.trading_engine.generate_trade_setup(symbol, analysis)
         
         if setup and self.additional_filters(setup, analysis):
-            self.trading_engine.execute_trade(setup, timeframe)
+            # MODIFIÉ : passage de 'analysis' en plus
+            self.trading_engine.execute_trade(setup, analysis, timeframe)
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
         th = self.config.get('trading_hours', {})
