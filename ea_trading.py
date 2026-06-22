@@ -8,7 +8,7 @@ Version: 6.0 - Institutional Grade
 - Rapport quotidien automatique (23h00)
 - Réconciliation des positions au démarrage
 - Notifications Telegram (intégrées)
-- Calendrier économique ForexFactory (gratuit, sans clé API)
+- Calendrier économique MT5 natif via script MQL5
 """
 
 import numpy as np
@@ -51,65 +51,59 @@ class TradeSetup:
 
 class MT5EconomicCalendar:
     """
-    Filtre de news via l'API JSON gratuite de ForexFactory.
-    Récupère les événements à fort impact de la semaine.
+    Filtre de news via script MQL5 externe (CalendarFilter.ex5).
+    Le script écrit news_lock.json dans le dossier MQL5/Files de MT5.
     """
-    def __init__(self, lock_file: str = "news_lock.json", minutes_before: int = 30, minutes_after: int = 30):
+    def __init__(self, lock_file: str = None, minutes_before: int = 30, minutes_after: int = 30):
         self.minutes_before = minutes_before
         self.minutes_after = minutes_after
         self.enabled = True
-        self.cache = []
-        self.last_fetch = 0
+        self.lock_file = None
         
-    def _get_events(self):
-        now = time.time()
-        if now - self.last_fetch < 300 and self.cache:
-            return self.cache
-            
-        try:
-            url = "https://cdn-nfs.forexfactory.com/ff-calendar-thisweek.json"
-            resp = requests.get(url, timeout=10, headers={'User-Agent': 'Mozilla/5.0'})
-            if resp.status_code == 200:
-                self.cache = resp.json()
-                self.last_fetch = now
-                return self.cache
-        except Exception as e:
-            logger.error(f"[CALENDRIER] Erreur récupération ForexFactory: {e}")
-        return self.cache
-
+        if lock_file is None:
+            try:
+                if mt5.terminal_info() is not None:
+                    data_path = mt5.terminal_info().data_path
+                    self.lock_file = os.path.join(data_path, "MQL5", "Files", "news_lock.json")
+                else:
+                    self.lock_file = "news_lock.json"
+            except:
+                self.lock_file = "news_lock.json"
+        else:
+            self.lock_file = lock_file
+        
+        if self.lock_file and not os.path.exists(self.lock_file):
+            logger.warning("="*60)
+            logger.warning("[ATTENTION] Fichier news_lock.json introuvable !")
+            logger.warning(f"Chemin attendu : {self.lock_file}")
+            logger.warning("Lancez le script CalendarFilter.ex5 dans MT5.")
+            logger.warning("Le filtre de news est DÉSACTIVÉ en attendant.")
+            logger.warning("="*60)
+            self.enabled = False
+        
     def is_blackout_period(self, symbol: str) -> bool:
-        if not self.enabled:
+        if not self.enabled or not self.lock_file:
             return False
         
         try:
-            events = self._get_events()
-            now = datetime.now()
-            
-            for evt in events:
-                if len(evt) < 6:
-                    continue
-                    
-                impact = evt[5] if len(evt) > 5 else ""
-                if impact != "High":
-                    continue
-                    
-                date_str = evt[3] if len(evt) > 3 else ""
-                time_str = evt[4] if len(evt) > 4 else ""
+            if not os.path.exists(self.lock_file):
+                self.enabled = False
+                return False
                 
-                if not date_str or not time_str:
-                    continue
-                    
-                try:
-                    et = datetime.strptime(f"{date_str} {time_str}", "%m-%d-%Y %I:%M%p")
-                    diff = (now - et).total_seconds() / 60
-                    
-                    if -self.minutes_before <= diff <= self.minutes_after:
-                        name = evt[1] if len(evt) > 1 else "Inconnu"
-                        logger.warning(f"[NEWS BLACKOUT] {name} ({diff:.0f} min)")
-                        return True
-                except:
-                    pass
-                    
+            file_age = time.time() - os.path.getmtime(self.lock_file)
+            if file_age > 120:
+                logger.warning(f"[CALENDRIER] Fichier pas mis à jour depuis {file_age:.0f}s")
+                return False
+            
+            with open(self.lock_file, 'r') as f:
+                data = json.load(f)
+            
+            if data.get('blackout', False):
+                logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
+                return True
+                
+        except json.JSONDecodeError:
+            logger.error(f"[CALENDRIER] Erreur de lecture JSON dans {self.lock_file}")
         except Exception as e:
             logger.error(f"[CALENDRIER] Erreur: {e}")
             
@@ -123,7 +117,7 @@ class NewsAnalyzer:
             logger.warning("="*60)
             logger.warning("[ATTENTION] L'ANALYSE DES NEWS EST DÉSACTIVÉE !")
             logger.warning("L'EA ne prendra pas en compte le sentiment du marché.")
-            logger.warning("Filtre news : ForexFactory (High Impact uniquement).")
+            logger.warning("Filtre news : script MQL5 externe (CalendarFilter.ex5).")
             logger.warning("="*60)
             
     def analyze_news_impact(self, symbol: str) -> Dict:
@@ -257,11 +251,11 @@ class TradingEngine:
         self.test_mode = config.get('test_mode', False)
         self.indicators = ProfessionalIndicators()
         self.news_analyzer = NewsAnalyzer(config.get('news_api', {}))
-        self.mt5_calendar = MT5EconomicCalendar()
         self.session_analyzer = SessionAnalyzer()
         self.risk_manager = None
         self.mt5_credentials = config.get('mt5_credentials', {})
         self._initialize_mt5(self.mt5_credentials)
+        self.mt5_calendar = MT5EconomicCalendar()
         
     def _initialize_mt5(self, credentials: Dict) -> bool:
         if not credentials: return False
