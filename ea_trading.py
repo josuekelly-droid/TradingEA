@@ -22,6 +22,7 @@ import logging
 import json
 import time
 import os
+import sys
 import traceback
 
 logging.basicConfig(
@@ -29,7 +30,7 @@ logging.basicConfig(
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.FileHandler('ea_trading.log'),
-        logging.StreamHandler()
+        logging.StreamHandler(sys.stdout)
     ]
 )
 logger = logging.getLogger(__name__)
@@ -79,6 +80,7 @@ class MT5EconomicCalendar:
             logger.warning("Lancez le script CalendarFilter.ex5 dans MT5.")
             logger.warning("Le filtre de news est DÉSACTIVÉ en attendant.")
             logger.warning("="*60)
+            sys.stdout.flush()
             self.enabled = False
         
     def is_blackout_period(self, symbol: str) -> bool:
@@ -90,7 +92,6 @@ class MT5EconomicCalendar:
                 self.enabled = False
                 return False
             
-            # Réessayer jusqu'à 3 fois si le fichier est vide (écriture MQL5 en cours)
             for attempt in range(3):
                 if os.path.getsize(self.lock_file) == 0:
                     if attempt < 2:
@@ -111,10 +112,12 @@ class MT5EconomicCalendar:
                     file_age = time.time() - os.path.getmtime(self.lock_file)
                     if file_age > 120:
                         logger.warning(f"[CALENDRIER] Fichier pas mis à jour depuis {file_age:.0f}s")
+                        sys.stdout.flush()
                         return False
                     
                     if data.get('blackout', False):
                         logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
+                        sys.stdout.flush()
                         return True
                     
                     return False
@@ -123,6 +126,7 @@ class MT5EconomicCalendar:
             pass
         except Exception as e:
             logger.error(f"[CALENDRIER] Erreur: {e}")
+            sys.stdout.flush()
             
         return False
 
@@ -136,6 +140,7 @@ class NewsAnalyzer:
             logger.warning("L'EA ne prendra pas en compte le sentiment du marché.")
             logger.warning("Filtre news : script MQL5 externe (CalendarFilter.ex5).")
             logger.warning("="*60)
+            sys.stdout.flush()
             
     def analyze_news_impact(self, symbol: str) -> Dict:
         return {'impact_score': 0, 'bias': 'neutral'}
@@ -229,6 +234,7 @@ class RiskManager:
         pnl = self.get_daily_pnl()
         if pnl <= -abs(self.account_balance * (self.max_daily_loss / 100)):
             logger.warning(f"[RISQUE MAX] Perte quotidienne limite atteinte! PnL: {pnl}$")
+            sys.stdout.flush()
             return True
         return False
         
@@ -242,6 +248,7 @@ class RiskManager:
     def is_max_trades_reached(self) -> bool:
         if self.get_trades_today() >= self.max_trades_per_day:
             logger.warning(f"[SURTRADING] Limite de trades quotidiens atteinte ({self.max_trades_per_day})")
+            sys.stdout.flush()
             return True
         return False
 
@@ -278,12 +285,18 @@ class TradingEngine:
         if not credentials: return False
         if not mt5.initialize(): return False
         if not mt5.login(credentials['login'], password=credentials['password'], server=credentials['server']):
-            logger.error(f"Echec auth MT5: {mt5.last_error()}"); return False
-        logger.info("Connexion MT5 reussie."); return True
+            logger.error(f"Echec auth MT5: {mt5.last_error()}")
+            sys.stdout.flush()
+            return False
+        logger.info("Connexion MT5 reussie.")
+        sys.stdout.flush()
+        return True
         
     def check_connection(self) -> bool:
         if mt5.terminal_info() is None or mt5.account_info() is None:
-            logger.error("Connexion MT5 perdue. Reconnexion..."); mt5.shutdown(); time.sleep(5)
+            logger.error("Connexion MT5 perdue. Reconnexion...")
+            sys.stdout.flush()
+            mt5.shutdown(); time.sleep(5)
             return self._initialize_mt5(self.mt5_credentials)
         return True
     
@@ -349,6 +362,7 @@ class TradingEngine:
         max_spread = self.config.get('risk_management', {}).get('max_spread', {}).get(setup.symbol, 10.0)
         if spread > max_spread:
             logger.warning(f"Spread trop élevé pour {setup.symbol}: {spread} > {max_spread}")
+            sys.stdout.flush()
             return False
             
         if self.risk_manager.is_max_trades_reached(): return False
@@ -365,6 +379,7 @@ class TradingEngine:
             chat_id = telegram_config.get('chat_id', '')
             if not bot_token or not chat_id:
                 logger.warning("[TELEGRAM] Token ou Chat ID manquant dans config.json")
+                sys.stdout.flush()
                 return
             
             signals = ', '.join(analysis['trade_score']['signals'])
@@ -392,21 +407,26 @@ Prix d'entrée: {setup.entry_price:.2f}
             
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             params = {'chat_id': chat_id, 'text': message.strip()}
-            response = requests.post(url, params=params, timeout=10)
+            proxies = {'http': None, 'https': None}
+            response = requests.post(url, params=params, timeout=10, proxies=proxies)
             
             if response.status_code == 200:
                 logger.info("[TELEGRAM] Notification envoyée avec succès")
+                sys.stdout.flush()
             else:
                 logger.warning(f"[TELEGRAM] Erreur envoi: {response.status_code} - {response.text}")
+                sys.stdout.flush()
                 
         except Exception as e:
             logger.error(f"[TELEGRAM] Erreur lors de l'envoi: {e}")
+            sys.stdout.flush()
     
     def execute_trade(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> bool:
         if not self._pre_trade_checks(setup): return False
         
         if self.test_mode:
             logger.info(f"[TEST MODE] Trade simulé: {setup.symbol} {setup.direction} Prix: {setup.entry_price}")
+            sys.stdout.flush()
             self._send_telegram_alert(setup, analysis, timeframe)
             return True
             
@@ -430,8 +450,11 @@ Prix d'entrée: {setup.entry_price:.2f}
             
             res = mt5.order_send(req)
             if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
-                logger.error(f"Erreur exécution TP{i+1}: {mt5.last_error()}"); return False
+                logger.error(f"Erreur exécution TP{i+1}: {mt5.last_error()}")
+                sys.stdout.flush()
+                return False
             logger.info(f"[OK] Trade TP{i+1} exécuté: Ticket {res.order}")
+            sys.stdout.flush()
         
         self._send_telegram_alert(setup, analysis, timeframe)
         return True
@@ -458,10 +481,16 @@ Prix d'entrée: {setup.entry_price:.2f}
             if profit >= atr * trail_act:
                 if pos.type == 0:
                     new_sl = curr_price - (atr * trail_dist)
-                    if new_sl > pos.sl: self._modify_position(pos.ticket, new_sl, pos.tp)
+                    if new_sl > pos.sl:
+                        self._modify_position(pos.ticket, new_sl, pos.tp)
+                        logger.info(f"Trailing Stop activé sur {pos.symbol} ticket {pos.ticket}")
+                        sys.stdout.flush()
                 else:
                     new_sl = curr_price + (atr * trail_dist)
-                    if pos.sl == 0 or new_sl < pos.sl: self._modify_position(pos.ticket, new_sl, pos.tp)
+                    if pos.sl == 0 or new_sl < pos.sl:
+                        self._modify_position(pos.ticket, new_sl, pos.tp)
+                        logger.info(f"Trailing Stop activé sur {pos.symbol} ticket {pos.ticket}")
+                        sys.stdout.flush()
             
             if profit >= atr * be_act:
                 if pos.type == 0: new_sl = pos.price_open + (atr * be_off)
@@ -470,6 +499,8 @@ Prix d'entrée: {setup.entry_price:.2f}
                 if (pos.type == 0 and (pos.sl == 0 or new_sl > pos.sl)) or \
                    (pos.type == 1 and (pos.sl == 0 or new_sl < pos.sl)):
                     self._modify_position(pos.ticket, new_sl, pos.tp)
+                    logger.info(f"Break-Even activé sur {pos.symbol} ticket {pos.ticket}")
+                    sys.stdout.flush()
 
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
         req = {"action": mt5.TRADE_ACTION_SLTP, "position": ticket, "sl": sl, "tp": tp}
@@ -487,6 +518,7 @@ class ExpertAdvisor:
         
     def start(self):
         logger.info("Démarrage EA (Mode Institutionnel V6)...")
+        sys.stdout.flush()
         self.is_running = True
         acc = mt5.account_info()
         if acc is None: return
@@ -494,6 +526,7 @@ class ExpertAdvisor:
         self.trading_engine.risk_manager = RiskManager(acc.balance, self.config.get('risk_management', {}), self.config.get('tp_sl_settings', {}))
         
         logger.info("Réconciliation des positions ouvertes au démarrage...")
+        sys.stdout.flush()
         self.trading_engine.manage_open_positions()
         
         last_bar_time = {}
@@ -519,13 +552,17 @@ class ExpertAdvisor:
                         key = f"{symbol}_{tf}"
                         if last_bar_time.get(key) != rates[-1]['time']:
                             last_bar_time[key] = rates[-1]['time']
+                            logger.info(f"Nouvelle bougie {tf} détectée pour {symbol}")
+                            sys.stdout.flush()
                             self.run_iteration_for_symbol(symbol, tf)
                             
                 time.sleep(10)
             except KeyboardInterrupt:
                 self.stop()
             except Exception as e:
-                logger.error(f"Erreur boucle principale: {e}"); time.sleep(60)
+                logger.error(f"Erreur boucle principale: {e}")
+                sys.stdout.flush()
+                time.sleep(60)
 
     def run_iteration_for_symbol(self, symbol: str, timeframe: str):
         if self.trading_engine.risk_manager.is_daily_loss_limit_reached(): return
@@ -552,10 +589,22 @@ class ExpertAdvisor:
         if th.get('trade_london_session', True): allowed.append('london')
         if th.get('trade_asian_session', False): allowed.append('asian')
             
-        if sess not in allowed: return False
-        if th.get('us_session_only_high_confidence', True) and sess not in ['us', 'overlap_london_us'] and conf < 0.70: return False
-        if analysis['atr'] < analysis['atr_series'].rolling(20).mean().iloc[-1] * 0.5: return False
-        if self.trading_engine.mt5_calendar.is_blackout_period(setup.symbol): return False
+        if sess not in allowed:
+            logger.info(f"Trade bloqué: session {sess} non autorisée")
+            sys.stdout.flush()
+            return False
+        if th.get('us_session_only_high_confidence', True) and sess not in ['us', 'overlap_london_us'] and conf < 0.70:
+            logger.info(f"Trade bloqué: confiance insuffisante hors US ({conf:.1%})")
+            sys.stdout.flush()
+            return False
+        if analysis['atr'] < analysis['atr_series'].rolling(20).mean().iloc[-1] * 0.5:
+            logger.info(f"Trade bloqué: volatilité insuffisante")
+            sys.stdout.flush()
+            return False
+        if self.trading_engine.mt5_calendar.is_blackout_period(setup.symbol):
+            logger.info(f"Trade bloqué: période de news")
+            sys.stdout.flush()
+            return False
         return True
 
     def _generate_daily_report(self):
@@ -570,12 +619,14 @@ class ExpertAdvisor:
             logger.info(f"  PnL Réalisé: {pnl:.2f}$")
             logger.info(f"  Limite de perte: {self.trading_engine.risk_manager.max_daily_loss}%")
             logger.info("="*50)
+            sys.stdout.flush()
             self.last_report_date = now.date()
 
     def stop(self):
         self.is_running = False
         mt5.shutdown()
         logger.info("EA arrêté.")
+        sys.stdout.flush()
 
 if __name__ == "__main__":
     config_path = "config.json"
