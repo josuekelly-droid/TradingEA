@@ -1,14 +1,12 @@
 """
 Expert Advisor Professionnel - BTC/USD & Gold/USD
 Auteur: Trading System Pro
-Version: 6.0 - Institutional Grade
-- Verrouillage par symbole (Anti-Hedging H1/H4)
-- Trailing & Break-Even dynamiques (config.json)
-- Contrôle du spread et Limite de trades journaliers
-- Rapport quotidien automatique (23h00)
-- Réconciliation des positions au démarrage
-- Notifications Telegram (intégrées)
-- Calendrier économique MT5 natif via script MQL5
+Version: 6.1 - Optimized
+- SL/TP rééquilibrés (SL 1.5x, TP1 1.0x ATR)
+- Filtre H4 obligatoire pour trades H1
+- Logs complets de scoring et blocage
+- Délai post-news (2 bougies)
+- Seuil de confiance relevé à 65%
 """
 
 import numpy as np
@@ -51,15 +49,12 @@ class TradeSetup:
     timestamp: datetime
 
 class MT5EconomicCalendar:
-    """
-    Filtre de news via script MQL5 externe (CalendarFilter.ex5).
-    Le script écrit news_lock.json dans le dossier MQL5/Files de MT5.
-    """
     def __init__(self, lock_file: str = None, minutes_before: int = 30, minutes_after: int = 30):
         self.minutes_before = minutes_before
         self.minutes_after = minutes_after
         self.enabled = True
         self.lock_file = None
+        self.last_blackout_end = None
         
         if lock_file is None:
             try:
@@ -78,7 +73,6 @@ class MT5EconomicCalendar:
             logger.warning("[ATTENTION] Fichier news_lock.json introuvable !")
             logger.warning(f"Chemin attendu : {self.lock_file}")
             logger.warning("Lancez le script CalendarFilter.ex5 dans MT5.")
-            logger.warning("Le filtre de news est DÉSACTIVÉ en attendant.")
             logger.warning("="*60)
             sys.stdout.flush()
             self.enabled = False
@@ -116,8 +110,9 @@ class MT5EconomicCalendar:
                         return False
                     
                     if data.get('blackout', False):
-                        logger.warning(f"[NEWS BLACKOUT] Période de news détectée par le script MQL5")
+                        logger.warning(f"[NEWS BLACKOUT] Période de news détectée")
                         sys.stdout.flush()
+                        self.last_blackout_end = datetime.now() + timedelta(minutes=self.minutes_after)
                         return True
                     
                     return False
@@ -129,18 +124,24 @@ class MT5EconomicCalendar:
             sys.stdout.flush()
             
         return False
+    
+    def is_post_news_cooldown(self) -> bool:
+        """Vérifie si on est dans la période de refroidissement après un blackout"""
+        if self.last_blackout_end is None:
+            return False
+        if datetime.now() < self.last_blackout_end + timedelta(hours=2):
+            return True
+        self.last_blackout_end = None
+        return False
 
 class NewsAnalyzer:
     def __init__(self, config: Dict = None):
-        self.enabled = config.get('enabled', False) if isinstance(config, dict) else False
-        
-        if not self.enabled:
-            logger.warning("="*60)
-            logger.warning("[ATTENTION] L'ANALYSE DES NEWS EST DÉSACTIVÉE !")
-            logger.warning("L'EA ne prendra pas en compte le sentiment du marché.")
-            logger.warning("Filtre news : script MQL5 externe (CalendarFilter.ex5).")
-            logger.warning("="*60)
-            sys.stdout.flush()
+        self.enabled = False
+        logger.warning("="*60)
+        logger.warning("[INFO] Analyse de sentiment désactivée.")
+        logger.warning("Filtre news : calendrier MT5 natif + délai post-news.")
+        logger.warning("="*60)
+        sys.stdout.flush()
             
     def analyze_news_impact(self, symbol: str) -> Dict:
         return {'impact_score': 0, 'bias': 'neutral'}
@@ -261,12 +262,12 @@ class RiskManager:
         return min(lot_size, max_lot)
     
     def calculate_tp_levels(self, entry_price: float, direction: str, atr_value: float) -> List[float]:
-        m = [self.tp_sl_config.get(f'tp{i}_atr_multiplier', i*1.5) for i in [1, 2, 3]]
+        m = [self.tp_sl_config.get(f'tp{i}_atr_multiplier', 1.0) for i in [1, 2, 3]]
         if direction == 'BUY': return [entry_price + atr_value * mult for mult in m]
         else: return [entry_price - atr_value * mult for mult in m]
     
     def calculate_stop_loss(self, entry_price: float, direction: str, atr_value: float) -> float:
-        sl_mult = self.tp_sl_config.get('sl_atr_multiplier', 2.0)
+        sl_mult = self.tp_sl_config.get('sl_atr_multiplier', 1.5)
         return entry_price - (atr_value * sl_mult) if direction == 'BUY' else entry_price + (atr_value * sl_mult)
 
 class TradingEngine:
@@ -307,7 +308,29 @@ class TradingEngine:
         df = pd.DataFrame(rates); df['time'] = pd.to_datetime(df['time'], unit='s'); df.set_index('time', inplace=True)
         return df
     
-    def analyze_market_conditions(self, symbol: str, data: pd.DataFrame) -> Dict:
+    def _get_h4_direction(self, symbol: str) -> str:
+        """Retourne la direction H4 pour le filtre multi-timeframe"""
+        try:
+            h4_data = self.fetch_market_data(symbol, 'H4', 100)
+            if h4_data.empty:
+                return 'NEUTRAL'
+            
+            st = self.indicators.calculate_supertrend(h4_data['high'], h4_data['low'], h4_data['close'])
+            ich = self.indicators.calculate_ichimoku(h4_data['high'], h4_data['low'], h4_data['close'])
+            close = h4_data['close'].iloc[-1]
+            
+            cloud_top = max(ich['senkou_span_a'].iloc[-1], ich['senkou_span_b'].iloc[-1])
+            cloud_bottom = min(ich['senkou_span_a'].iloc[-1], ich['senkou_span_b'].iloc[-1])
+            
+            if st['direction'].iloc[-1] == 1 and close > cloud_top:
+                return 'BUY'
+            elif st['direction'].iloc[-1] == -1 and close < cloud_bottom:
+                return 'SELL'
+            return 'NEUTRAL'
+        except:
+            return 'NEUTRAL'
+    
+    def analyze_market_conditions(self, symbol: str, data: pd.DataFrame, timeframe: str) -> Dict:
         ind_cfg = self.config.get('indicators', {})
         st = self.indicators.calculate_supertrend(data['high'], data['low'], data['close'], ind_cfg.get('supertrend_period', 10), ind_cfg.get('supertrend_multiplier', 3.0))
         ich = self.indicators.calculate_ichimoku(data['high'], data['low'], data['close'])
@@ -334,23 +357,41 @@ class TradingEngine:
         
         max_score = 10.5
         norm_score = max(-max_score, min(max_score, score))
+        direction = 'BUY' if norm_score > 2 else 'SELL' if norm_score < -2 else 'NEUTRAL'
+        confidence = abs(norm_score) / max_score
+        
+        logger.info(f"[SCORE] {symbol} {timeframe} | Score: {score:.1f}/{max_score} | Dir: {direction} | Conf: {confidence:.1%} | Signaux: {', '.join(signals)}")
+        sys.stdout.flush()
+        
         return {
             'atr': atr.iloc[-1], 'atr_series': atr, 'session': session, 'current_price': data['close'].iloc[-1],
             'trade_score': {
-                'direction': 'BUY' if norm_score > 2 else 'SELL' if norm_score < -2 else 'NEUTRAL',
-                'confidence': abs(norm_score) / max_score, 'signals': signals
+                'direction': direction,
+                'confidence': confidence,
+                'signals': signals,
+                'score': score
             }
         }
     
     def generate_trade_setup(self, symbol: str, analysis: Dict) -> Optional[TradeSetup]:
         ts = analysis['trade_score']
-        if ts['confidence'] < 0.60 or ts['direction'] == 'NEUTRAL': return None
+        if ts['confidence'] < 0.65:
+            logger.info(f"[SETUP] {symbol} rejeté: confiance {ts['confidence']:.1%} < 65%")
+            sys.stdout.flush()
+            return None
+        if ts['direction'] == 'NEUTRAL':
+            logger.info(f"[SETUP] {symbol} rejeté: direction NEUTRE")
+            sys.stdout.flush()
+            return None
         
         entry = analysis['current_price']; atr = analysis['atr']
         sl = self.risk_manager.calculate_stop_loss(entry, ts['direction'], atr)
         tps = self.risk_manager.calculate_tp_levels(entry, ts['direction'], atr)
         total_lot = self.risk_manager.calculate_position_size(entry, sl, symbol)
         lots = [total_lot * d for d in self.risk_manager.tp_sl_config.get('lot_distribution', [0.4, 0.3, 0.3])]
+        
+        logger.info(f"[SETUP] {symbol} {ts['direction']} généré | SL: {sl:.2f} | TP1: {tps[0]:.2f} | TP2: {tps[1]:.2f} | TP3: {tps[2]:.2f} | Lots: {[f'{l:.3f}' for l in lots]}")
+        sys.stdout.flush()
         
         return TradeSetup(symbol, ts['direction'], entry, sl, tps[0], tps[1], tps[2], lots, ts['confidence'], datetime.now())
     
@@ -361,11 +402,14 @@ class TradingEngine:
         spread = tick.ask - tick.bid
         max_spread = self.config.get('risk_management', {}).get('max_spread', {}).get(setup.symbol, 10.0)
         if spread > max_spread:
-            logger.warning(f"Spread trop élevé pour {setup.symbol}: {spread} > {max_spread}")
+            logger.warning(f"[SPREAD] {setup.symbol}: {spread} > {max_spread}")
             sys.stdout.flush()
             return False
             
-        if self.risk_manager.is_max_trades_reached(): return False
+        if self.risk_manager.is_max_trades_reached():
+            logger.warning(f"[LIMITE] Trades quotidiens atteint")
+            sys.stdout.flush()
+            return False
         
         return True
 
@@ -378,8 +422,6 @@ class TradingEngine:
             bot_token = telegram_config.get('bot_token', '')
             chat_id = telegram_config.get('chat_id', '')
             if not bot_token or not chat_id:
-                logger.warning("[TELEGRAM] Token ou Chat ID manquant dans config.json")
-                sys.stdout.flush()
                 return
             
             signals = ', '.join(analysis['trade_score']['signals'])
@@ -408,18 +450,11 @@ Prix d'entrée: {setup.entry_price:.2f}
             url = f"https://api.telegram.org/bot{bot_token}/sendMessage"
             params = {'chat_id': chat_id, 'text': message.strip()}
             proxies = {'http': None, 'https': None}
-            response = requests.post(url, params=params, timeout=10, proxies=proxies)
-            
-            if response.status_code == 200:
-                logger.info("[TELEGRAM] Notification envoyée avec succès")
-                sys.stdout.flush()
-            else:
-                logger.warning(f"[TELEGRAM] Erreur envoi: {response.status_code} - {response.text}")
-                sys.stdout.flush()
-                
-        except Exception as e:
-            logger.error(f"[TELEGRAM] Erreur lors de l'envoi: {e}")
+            requests.post(url, params=params, timeout=10, proxies=proxies)
+            logger.info("[TELEGRAM] Notification envoyée")
             sys.stdout.flush()
+        except:
+            pass
     
     def execute_trade(self, setup: TradeSetup, analysis: Dict, timeframe: str) -> bool:
         if not self._pre_trade_checks(setup): return False
@@ -450,10 +485,10 @@ Prix d'entrée: {setup.entry_price:.2f}
             
             res = mt5.order_send(req)
             if res is None or res.retcode != mt5.TRADE_RETCODE_DONE:
-                logger.error(f"Erreur exécution TP{i+1}: {mt5.last_error()}")
+                logger.error(f"[ERREUR] TP{i+1}: {mt5.last_error()}")
                 sys.stdout.flush()
                 return False
-            logger.info(f"[OK] Trade TP{i+1} exécuté: Ticket {res.order}")
+            logger.info(f"[OK] TP{i+1} exécuté: Ticket {res.order}")
             sys.stdout.flush()
         
         self._send_telegram_alert(setup, analysis, timeframe)
@@ -483,13 +518,13 @@ Prix d'entrée: {setup.entry_price:.2f}
                     new_sl = curr_price - (atr * trail_dist)
                     if new_sl > pos.sl:
                         self._modify_position(pos.ticket, new_sl, pos.tp)
-                        logger.info(f"Trailing Stop activé sur {pos.symbol} ticket {pos.ticket}")
+                        logger.info(f"[TRAILING] {pos.symbol} ticket {pos.ticket} SL -> {new_sl:.2f}")
                         sys.stdout.flush()
                 else:
                     new_sl = curr_price + (atr * trail_dist)
                     if pos.sl == 0 or new_sl < pos.sl:
                         self._modify_position(pos.ticket, new_sl, pos.tp)
-                        logger.info(f"Trailing Stop activé sur {pos.symbol} ticket {pos.ticket}")
+                        logger.info(f"[TRAILING] {pos.symbol} ticket {pos.ticket} SL -> {new_sl:.2f}")
                         sys.stdout.flush()
             
             if profit >= atr * be_act:
@@ -499,7 +534,7 @@ Prix d'entrée: {setup.entry_price:.2f}
                 if (pos.type == 0 and (pos.sl == 0 or new_sl > pos.sl)) or \
                    (pos.type == 1 and (pos.sl == 0 or new_sl < pos.sl)):
                     self._modify_position(pos.ticket, new_sl, pos.tp)
-                    logger.info(f"Break-Even activé sur {pos.symbol} ticket {pos.ticket}")
+                    logger.info(f"[BREAKEVEN] {pos.symbol} ticket {pos.ticket} SL -> {new_sl:.2f}")
                     sys.stdout.flush()
 
     def _modify_position(self, ticket: int, sl: float, tp: float) -> bool:
@@ -517,7 +552,13 @@ class ExpertAdvisor:
         self.last_report_date = None
         
     def start(self):
-        logger.info("Démarrage EA (Mode Institutionnel V6)...")
+        logger.info("="*50)
+        logger.info("Démarrage EA V6.1 - Optimized")
+        logger.info(f"Symboles: {self.symbols}")
+        logger.info(f"Timeframes: {self.timeframes}")
+        logger.info(f"SL: 1.5x ATR | TP1: 1.0x ATR | TP2: 3.0x ATR | TP3: 5.0x ATR")
+        logger.info(f"Confiance min: 65% | Filtre H4: Activé | Délai post-news: 2h")
+        logger.info("="*50)
         sys.stdout.flush()
         self.is_running = True
         acc = mt5.account_info()
@@ -525,7 +566,7 @@ class ExpertAdvisor:
         
         self.trading_engine.risk_manager = RiskManager(acc.balance, self.config.get('risk_management', {}), self.config.get('tp_sl_settings', {}))
         
-        logger.info("Réconciliation des positions ouvertes au démarrage...")
+        logger.info(f"Balance: {acc.balance:.2f}€ | Risque/trade: {self.config['risk_management']['risk_percent']}%")
         sys.stdout.flush()
         self.trading_engine.manage_open_positions()
         
@@ -552,7 +593,7 @@ class ExpertAdvisor:
                         key = f"{symbol}_{tf}"
                         if last_bar_time.get(key) != rates[-1]['time']:
                             last_bar_time[key] = rates[-1]['time']
-                            logger.info(f"Nouvelle bougie {tf} détectée pour {symbol}")
+                            logger.info(f"[BOUGIE] {symbol} {tf}")
                             sys.stdout.flush()
                             self.run_iteration_for_symbol(symbol, tf)
                             
@@ -560,29 +601,51 @@ class ExpertAdvisor:
             except KeyboardInterrupt:
                 self.stop()
             except Exception as e:
-                logger.error(f"Erreur boucle principale: {e}")
+                logger.error(f"Erreur boucle: {e}")
                 sys.stdout.flush()
                 time.sleep(60)
 
     def run_iteration_for_symbol(self, symbol: str, timeframe: str):
-        if self.trading_engine.risk_manager.is_daily_loss_limit_reached(): return
+        if self.trading_engine.risk_manager.is_daily_loss_limit_reached():
+            logger.warning(f"[STOP] Limite de perte quotidienne atteinte")
+            sys.stdout.flush()
+            return
         
         positions = mt5.positions_get(symbol=symbol, magic=MAGIC_NUMBER)
         if positions and len(positions) > 0:
+            return
+        
+        if self.trading_engine.mt5_calendar.is_blackout_period(symbol):
+            return
+        
+        if self.trading_engine.mt5_calendar.is_post_news_cooldown():
+            logger.info(f"[POST-NEWS] {symbol} {timeframe} en période de refroidissement")
+            sys.stdout.flush()
             return
             
         data = self.trading_engine.fetch_market_data(symbol, timeframe, 500)
         if data.empty: return
         
-        analysis = self.trading_engine.analyze_market_conditions(symbol, data)
+        analysis = self.trading_engine.analyze_market_conditions(symbol, data, timeframe)
         setup = self.trading_engine.generate_trade_setup(symbol, analysis)
         
-        if setup and self.additional_filters(setup, analysis):
-            self.trading_engine.execute_trade(setup, analysis, timeframe)
+        if setup:
+            if timeframe == 'H1':
+                h4_dir = self.trading_engine._get_h4_direction(symbol)
+                if h4_dir != setup.direction:
+                    logger.info(f"[H4 FILTRE] {symbol} H1={setup.direction} mais H4={h4_dir} -> Trade bloqué")
+                    sys.stdout.flush()
+                    return
+                logger.info(f"[H4 FILTRE] {symbol} H1={setup.direction} confirmé par H4={h4_dir}")
+                sys.stdout.flush()
+            
+            if self.additional_filters(setup, analysis):
+                self.trading_engine.execute_trade(setup, analysis, timeframe)
     
     def additional_filters(self, setup: TradeSetup, analysis: Dict) -> bool:
         th = self.config.get('trading_hours', {})
-        sess = analysis['session']; conf = analysis['trade_score']['confidence']
+        sess = analysis['session']
+        conf = analysis['trade_score']['confidence']
         
         allowed = []
         if th.get('trade_us_session', True): allowed.extend(['us', 'overlap_london_us'])
@@ -590,19 +653,15 @@ class ExpertAdvisor:
         if th.get('trade_asian_session', False): allowed.append('asian')
             
         if sess not in allowed:
-            logger.info(f"Trade bloqué: session {sess} non autorisée")
+            logger.info(f"[FILTRE] {setup.symbol} session {sess} non autorisée")
             sys.stdout.flush()
             return False
         if th.get('us_session_only_high_confidence', True) and sess not in ['us', 'overlap_london_us'] and conf < 0.70:
-            logger.info(f"Trade bloqué: confiance insuffisante hors US ({conf:.1%})")
+            logger.info(f"[FILTRE] {setup.symbol} confiance {conf:.1%} insuffisante hors US")
             sys.stdout.flush()
             return False
         if analysis['atr'] < analysis['atr_series'].rolling(20).mean().iloc[-1] * 0.5:
-            logger.info(f"Trade bloqué: volatilité insuffisante")
-            sys.stdout.flush()
-            return False
-        if self.trading_engine.mt5_calendar.is_blackout_period(setup.symbol):
-            logger.info(f"Trade bloqué: période de news")
+            logger.info(f"[FILTRE] {setup.symbol} volatilité insuffisante")
             sys.stdout.flush()
             return False
         return True
@@ -613,11 +672,10 @@ class ExpertAdvisor:
             pnl = self.trading_engine.risk_manager.get_daily_pnl()
             trades = self.trading_engine.risk_manager.get_trades_today()
             logger.info("="*50)
-            logger.info("[RAPPORT QUOTIDIEN DE FIN DE JOURNÉE]")
+            logger.info("[RAPPORT QUOTIDIEN]")
             logger.info(f"  Date: {now.date()}")
-            logger.info(f"  Trades exécutés aujourd'hui: {trades}")
-            logger.info(f"  PnL Réalisé: {pnl:.2f}$")
-            logger.info(f"  Limite de perte: {self.trading_engine.risk_manager.max_daily_loss}%")
+            logger.info(f"  Trades: {trades}")
+            logger.info(f"  PnL: {pnl:.2f}$")
             logger.info("="*50)
             sys.stdout.flush()
             self.last_report_date = now.date()

@@ -1,4 +1,4 @@
-# Expert Advisor Pro V6.0 - Institutional Grade
+# Expert Advisor Pro V6.1 - Institutional Grade
 
 Automated trading system for **BTC/USD** and **Gold/USD** on MetaTrader 5 platform.
 
