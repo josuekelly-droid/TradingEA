@@ -1,5 +1,6 @@
 
 config.json
+config_v7.json
 *.log
 
 # Environnement Python
