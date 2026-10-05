@@ -1450,6 +1450,26 @@ class SignalResult:
 
 
 class SignalEngine:
+    """
+    V7 directional signal engine.
+
+    IMPORTANT DESIGN RULE:
+    - signal_score is the configured directional score on the 0..maximum_score scale.
+    - quality is a separate setup-quality metric in the 0..1 range.
+    - quality is NEVER converted into signal_score.
+
+    With the supplied config, the maximum directional score is exactly 10.0:
+        H4 alignment   3.0
+        H1 trend       2.0
+        Supertrend     1.5
+        Ichimoku       1.0
+        RSI             0.5
+        MACD            0.5
+        M15 confirm    1.5
+        -------------------
+        TOTAL          10.0
+    """
+
     def __init__(
         self,
         config: Config,
@@ -1458,11 +1478,27 @@ class SignalEngine:
         self.config = config
         self.logger = logger
 
+    def _weights(self) -> Dict[str, float]:
+        weights = self.config.get(
+            "signal_engine",
+            "weights",
+            default={},
+        )
+
+        return {
+            "h4_trend": float(weights.get("h4_trend", 3.0)),
+            "h1_trend": float(weights.get("h1_trend", 2.0)),
+            "m15_confirmation": float(weights.get("m15_confirmation", 1.5)),
+            "supertrend": float(weights.get("supertrend", 1.5)),
+            "ichimoku": float(weights.get("ichimoku", 1.0)),
+            "rsi": float(weights.get("rsi", 0.5)),
+            "macd": float(weights.get("macd", 0.5)),
+        }
+
     def _supertrend_direction(
         self,
         df: pd.DataFrame,
     ) -> int:
-
         cfg = self.config.get(
             "indicators",
             "supertrend",
@@ -1475,7 +1511,13 @@ class SignalEngine:
             float(cfg.get("multiplier", 3.0)),
         )
 
-        value = int(trend.iloc[-1])
+        if trend.empty:
+            return NEUTRAL
+
+        value = safe_float(trend.iloc[-1], np.nan)
+
+        if not math.isfinite(value) or value == 0:
+            return NEUTRAL
 
         return BUY if value > 0 else SELL
 
@@ -1483,7 +1525,6 @@ class SignalEngine:
         self,
         df: pd.DataFrame,
     ) -> int:
-
         cfg = self.config.get(
             "indicators",
             "ichimoku",
@@ -1497,61 +1538,25 @@ class SignalEngine:
             int(cfg.get("senkou_b", 52)),
         )
 
-        close = safe_float(
-            df["close"].iloc[-1]
-        )
-
-        tenkan = safe_float(
-            ichi["tenkan"].iloc[-1],
-            np.nan,
-        )
-
-        kijun = safe_float(
-            ichi["kijun"].iloc[-1],
-            np.nan,
-        )
-
-        span_a = safe_float(
-            ichi["span_a"].iloc[-1],
-            np.nan,
-        )
-
-        span_b = safe_float(
-            ichi["span_b"].iloc[-1],
-            np.nan,
-        )
+        close = safe_float(df["close"].iloc[-1], np.nan)
+        tenkan = safe_float(ichi["tenkan"].iloc[-1], np.nan)
+        kijun = safe_float(ichi["kijun"].iloc[-1], np.nan)
+        span_a = safe_float(ichi["span_a"].iloc[-1], np.nan)
+        span_b = safe_float(ichi["span_b"].iloc[-1], np.nan)
 
         if any(
             not math.isfinite(x)
-            for x in [
-                tenkan,
-                kijun,
-                span_a,
-                span_b,
-            ]
+            for x in [close, tenkan, kijun, span_a, span_b]
         ):
             return NEUTRAL
 
-        cloud_top = max(
-            span_a,
-            span_b,
-        )
+        cloud_top = max(span_a, span_b)
+        cloud_bottom = min(span_a, span_b)
 
-        cloud_bottom = min(
-            span_a,
-            span_b,
-        )
-
-        if (
-            close > cloud_top
-            and tenkan > kijun
-        ):
+        if close > cloud_top and tenkan > kijun:
             return BUY
 
-        if (
-            close < cloud_bottom
-            and tenkan < kijun
-        ):
+        if close < cloud_bottom and tenkan < kijun:
             return SELL
 
         return NEUTRAL
@@ -1560,7 +1565,6 @@ class SignalEngine:
         self,
         df: pd.DataFrame,
     ) -> int:
-
         cfg = self.config.get(
             "indicators",
             "ema",
@@ -1571,45 +1575,27 @@ class SignalEngine:
             df["close"],
             int(cfg.get("fast", 20)),
         )
-
         slow = Indicators.ema(
             df["close"],
             int(cfg.get("slow", 50)),
         )
-
         trend = Indicators.ema(
             df["close"],
             int(cfg.get("trend", 200)),
         )
 
-        close = safe_float(
-            df["close"].iloc[-1]
-        )
+        close = safe_float(df["close"].iloc[-1], np.nan)
+        f = safe_float(fast.iloc[-1], np.nan)
+        s = safe_float(slow.iloc[-1], np.nan)
+        t = safe_float(trend.iloc[-1], np.nan)
 
-        f = safe_float(
-            fast.iloc[-1]
-        )
+        if any(not math.isfinite(x) for x in [close, f, s, t]):
+            return NEUTRAL
 
-        s = safe_float(
-            slow.iloc[-1]
-        )
-
-        t = safe_float(
-            trend.iloc[-1]
-        )
-
-        if (
-            close > f
-            and f > s
-            and close > t
-        ):
+        if close > f and f > s and close > t:
             return BUY
 
-        if (
-            close < f
-            and f < s
-            and close < t
-        ):
+        if close < f and f < s and close < t:
             return SELL
 
         return NEUTRAL
@@ -1618,15 +1604,11 @@ class SignalEngine:
         self,
         df: pd.DataFrame,
     ) -> int:
-
-        st = self._supertrend_direction(df)
-        ichi = self._ichimoku_direction(df)
-        ema = self._ema_direction(df)
-
+        """H4 structural direction: majority vote of ST / Ichimoku / EMA."""
         votes = [
-            st,
-            ichi,
-            ema,
+            self._supertrend_direction(df),
+            self._ichimoku_direction(df),
+            self._ema_direction(df),
         ]
 
         buy_votes = votes.count(BUY)
@@ -1643,175 +1625,87 @@ class SignalEngine:
     def h1_analysis(
         self,
         df: pd.DataFrame,
-    ) -> Tuple[
-        int,
-        float,
-        float,
-        Dict[str, Any],
-    ]:
+    ) -> Tuple[int, float, float, Dict[str, Any]]:
+        """
+        Calculate the H1 directional components only.
 
-        weights = self.config.get(
-            "signal_engine",
-            "weights",
-            default={},
-        )
-
-        ind_cfg = self.config.get(
-            "indicators",
-            default={},
-        )
+        H1 max = h1_trend + supertrend + ichimoku + rsi + macd.
+        The H4 and M15 weights are deliberately NOT included here.
+        """
+        weights = self._weights()
+        ind_cfg = self.config.get("indicators", default={})
 
         score_buy = 0.0
         score_sell = 0.0
 
-        st_dir = self._supertrend_direction(
-            df
+        st_dir = self._supertrend_direction(df)
+        ichi_dir = self._ichimoku_direction(df)
+        ema_dir = self._ema_direction(df)
+
+        rsi_cfg = ind_cfg.get("rsi", {})
+        rsi = safe_float(
+            Indicators.rsi(
+                df["close"],
+                int(rsi_cfg.get("period", 14)),
+            ).iloc[-1],
+            np.nan,
         )
 
-        ichi_dir = self._ichimoku_direction(
-            df
-        )
-
-        ema_dir = self._ema_direction(
-            df
-        )
-
-        rsi_cfg = ind_cfg.get(
-            "rsi",
-            {},
-        )
-
-        rsi = Indicators.rsi(
-            df["close"],
-            int(
-                rsi_cfg.get(
-                    "period",
-                    14,
-                )
-            ),
-        ).iloc[-1]
-
-        macd_cfg = ind_cfg.get(
-            "macd",
-            {},
-        )
-
+        macd_cfg = ind_cfg.get("macd", {})
         _, _, macd_hist = Indicators.macd(
             df["close"],
             int(macd_cfg.get("fast", 12)),
             int(macd_cfg.get("slow", 26)),
             int(macd_cfg.get("signal", 9)),
         )
-
-        macd_value = safe_float(
-            macd_hist.iloc[-1]
-        )
-
-        h1_trend_weight = float(
-            weights.get(
-                "h1_trend",
-                2.0,
-            )
-        )
-
-        st_weight = float(
-            weights.get(
-                "supertrend",
-                1.5,
-            )
-        )
-
-        ichi_weight = float(
-            weights.get(
-                "ichimoku",
-                1.0,
-            )
-        )
-
-        rsi_weight = float(
-            weights.get(
-                "rsi",
-                0.5,
-            )
-        )
-
-        macd_weight = float(
-            weights.get(
-                "macd",
-                0.5,
-            )
-        )
+        macd_value = safe_float(macd_hist.iloc[-1], np.nan)
 
         if ema_dir == BUY:
-            score_buy += h1_trend_weight
+            score_buy += weights["h1_trend"]
         elif ema_dir == SELL:
-            score_sell += h1_trend_weight
+            score_sell += weights["h1_trend"]
 
         if st_dir == BUY:
-            score_buy += st_weight
+            score_buy += weights["supertrend"]
         elif st_dir == SELL:
-            score_sell += st_weight
+            score_sell += weights["supertrend"]
 
         if ichi_dir == BUY:
-            score_buy += ichi_weight
+            score_buy += weights["ichimoku"]
         elif ichi_dir == SELL:
-            score_sell += ichi_weight
+            score_sell += weights["ichimoku"]
 
-        buy_min = float(
-            rsi_cfg.get(
-                "buy_min",
-                52.0,
-            )
-        )
+        buy_min = float(rsi_cfg.get("buy_min", 52.0))
+        buy_max = float(rsi_cfg.get("buy_max", 72.0))
+        sell_min = float(rsi_cfg.get("sell_min", 28.0))
+        sell_max = float(rsi_cfg.get("sell_max", 48.0))
 
-        buy_max = float(
-            rsi_cfg.get(
-                "buy_max",
-                72.0,
-            )
-        )
+        if math.isfinite(rsi):
+            if buy_min <= rsi <= buy_max:
+                score_buy += weights["rsi"]
+            if sell_min <= rsi <= sell_max:
+                score_sell += weights["rsi"]
 
-        sell_min = float(
-            rsi_cfg.get(
-                "sell_min",
-                28.0,
-            )
-        )
-
-        sell_max = float(
-            rsi_cfg.get(
-                "sell_max",
-                48.0,
-            )
-        )
-
-        if buy_min <= rsi <= buy_max:
-            score_buy += rsi_weight
-
-        if sell_min <= rsi <= sell_max:
-            score_sell += rsi_weight
-
-        if macd_value > 0:
-            score_buy += macd_weight
-        elif macd_value < 0:
-            score_sell += macd_weight
+        if math.isfinite(macd_value):
+            if macd_value > 0:
+                score_buy += weights["macd"]
+            elif macd_value < 0:
+                score_sell += weights["macd"]
 
         maximum = (
-            h1_trend_weight
-            + st_weight
-            + ichi_weight
-            + rsi_weight
-            + macd_weight
+            weights["h1_trend"]
+            + weights["supertrend"]
+            + weights["ichimoku"]
+            + weights["rsi"]
+            + weights["macd"]
         )
 
         if score_buy > score_sell:
             direction = BUY
             score = score_buy
-
         elif score_sell > score_buy:
             direction = SELL
             score = score_sell
-
         else:
             direction = NEUTRAL
             score = 0.0
@@ -1820,84 +1714,54 @@ class SignalEngine:
             "ema_direction": ema_dir,
             "supertrend_direction": st_dir,
             "ichimoku_direction": ichi_dir,
-            "rsi": safe_float(rsi),
+            "rsi": rsi,
             "macd_histogram": macd_value,
         }
 
-        return (
-            direction,
-            score,
-            maximum,
-            details,
-        )
+        return direction, score, maximum, details
 
     def m15_confirmation(
         self,
         df: pd.DataFrame,
         desired_direction: int,
-    ) -> Tuple[int, float, float]:
+    ) -> Tuple[int, float, float, Dict[str, Any]]:
+        """
+        M15 is a confirmation block with ONE configured weight.
 
+        The individual M15 indicators are used to determine confirmation,
+        but the final contribution to the global score is exactly
+        signal_engine.weights.m15_confirmation.
+        """
         if desired_direction == NEUTRAL:
-            return NEUTRAL, 0.0, 0.0
+            return NEUTRAL, 0.0, 1.0, {
+                "supertrend_direction": NEUTRAL,
+                "ichimoku_direction": NEUTRAL,
+                "ema_direction": NEUTRAL,
+                "votes": 0,
+            }
 
-        weights = self.config.get(
-            "signal_engine",
-            "weights",
-            default={},
+        st_dir = self._supertrend_direction(df)
+        ichi_dir = self._ichimoku_direction(df)
+        ema_dir = self._ema_direction(df)
+
+        votes = sum(
+            d == desired_direction
+            for d in [st_dir, ichi_dir, ema_dir]
         )
 
-        st_weight = float(
-            weights.get(
-                "supertrend",
-                1.5,
-            )
-        )
-
-        ichi_weight = float(
-            weights.get(
-                "ichimoku",
-                1.0,
-            )
-        )
-
-        st_dir = self._supertrend_direction(
-            df
-        )
-
-        ichi_dir = self._ichimoku_direction(
-            df
-        )
-
-        ema_dir = self._ema_direction(
-            df
-        )
-
-        score = 0.0
-
-        if st_dir == desired_direction:
-            score += st_weight
-
-        if ichi_dir == desired_direction:
-            score += ichi_weight
-
-        if ema_dir == desired_direction:
-            score += 0.5
-
-        maximum = (
-            st_weight
-            + ichi_weight
-            + 0.5
-        )
-
-        if score >= maximum * 0.5:
-            direction = desired_direction
-        else:
-            direction = NEUTRAL
+        # 2/3 or 3/3 confirms the desired direction.
+        direction = desired_direction if votes >= 2 else NEUTRAL
 
         return (
             direction,
-            score,
-            maximum,
+            float(votes),
+            3.0,
+            {
+                "supertrend_direction": st_dir,
+                "ichimoku_direction": ichi_dir,
+                "ema_direction": ema_dir,
+                "votes": votes,
+            },
         )
 
     def calculate_quality(
@@ -1908,36 +1772,23 @@ class SignalEngine:
         m15_score: float,
         m15_max: float,
     ) -> float:
-
+        """Independent setup quality metric. Never used as the signal score."""
         if h1_max <= 0:
             return 0.0
 
-        h1_strength = clamp(
-            h1_score / h1_max,
-            0.0,
-            1.0,
+        h1_strength = clamp(h1_score / h1_max, 0.0, 1.0)
+
+        m15_strength = (
+            clamp(m15_score / m15_max, 0.0, 1.0)
+            if m15_max > 0
+            else 0.0
         )
 
-        if m15_max > 0:
-            m15_strength = clamp(
-                m15_score / m15_max,
-                0.0,
-                1.0,
-            )
-        else:
-            m15_strength = 0.0
-
-        adx_strength = clamp(
-            regime.adx / 35.0,
-            0.0,
-            1.0,
-        )
+        adx_strength = clamp(regime.adx / 35.0, 0.0, 1.0)
 
         volatility_quality = 1.0
-
         if regime.atr_percentile < 20:
             volatility_quality = 0.4
-
         elif regime.atr_percentile > 90:
             volatility_quality = 0.6
 
@@ -1948,10 +1799,90 @@ class SignalEngine:
             + volatility_quality * 0.10
         )
 
-        return clamp(
-            quality,
-            0.0,
-            1.0,
+        return clamp(quality, 0.0, 1.0)
+
+    def _global_score(
+        self,
+        candidate: int,
+        h4_dir: int,
+        h1_details: Dict[str, Any],
+        m15_dir: int,
+    ) -> Tuple[float, Dict[str, float]]:
+        """Build the actual configured directional score on the 0..10 scale."""
+        weights = self._weights()
+
+        components = {
+            "h4_trend": weights["h4_trend"] if h4_dir == candidate else 0.0,
+            "h1_trend": weights["h1_trend"] if h1_details["ema_direction"] == candidate else 0.0,
+            "supertrend": weights["supertrend"] if h1_details["supertrend_direction"] == candidate else 0.0,
+            "ichimoku": weights["ichimoku"] if h1_details["ichimoku_direction"] == candidate else 0.0,
+            "rsi": 0.0,
+            "macd": 0.0,
+            "m15_confirmation": weights["m15_confirmation"] if m15_dir == candidate else 0.0,
+        }
+
+        rsi = safe_float(h1_details.get("rsi"), np.nan)
+        rsi_cfg = self.config.get(
+            "indicators",
+            "rsi",
+            default={},
+        )
+
+        if math.isfinite(rsi):
+            if candidate == BUY:
+                if float(rsi_cfg.get("buy_min", 52.0)) <= rsi <= float(rsi_cfg.get("buy_max", 72.0)):
+                    components["rsi"] = weights["rsi"]
+            elif candidate == SELL:
+                if float(rsi_cfg.get("sell_min", 28.0)) <= rsi <= float(rsi_cfg.get("sell_max", 48.0)):
+                    components["rsi"] = weights["rsi"]
+
+        macd_value = safe_float(h1_details.get("macd_histogram"), np.nan)
+        if math.isfinite(macd_value):
+            if candidate == BUY and macd_value > 0:
+                components["macd"] = weights["macd"]
+            elif candidate == SELL and macd_value < 0:
+                components["macd"] = weights["macd"]
+
+        return round(sum(components.values()), 4), components
+
+    def _log_score(
+        self,
+        symbol: Optional[str],
+        candidate: int,
+        h4_dir: int,
+        h1_dir: int,
+        m15_dir: int,
+        score: float,
+        maximum: float,
+        components: Dict[str, float],
+        quality: float,
+        regime: Regime,
+        decision: int,
+    ) -> None:
+        label = symbol or "MARKET"
+        self.logger.info(
+            f"{label} | candidate={direction_name(candidate)} | "
+            f"H4={direction_name(h4_dir)} | "
+            f"H1={direction_name(h1_dir)} | "
+            f"M15={direction_name(m15_dir)} | "
+            f"SCORE={score:.2f}/{maximum:.2f} | "
+            f"QUALITY={quality:.2f} | "
+            f"REGIME={regime.name} | "
+            f"ADX={regime.adx:.2f} | "
+            f"ATR%={regime.atr_percentile:.1f} | "
+            f"DECISION={direction_name(decision)}"
+        )
+
+        self.logger.info(
+            f"{label} SCORE COMPONENTS | "
+            f"H4={components['h4_trend']:.2f} | "
+            f"H1={components['h1_trend']:.2f} | "
+            f"ST={components['supertrend']:.2f} | "
+            f"ICHI={components['ichimoku']:.2f} | "
+            f"RSI={components['rsi']:.2f} | "
+            f"MACD={components['macd']:.2f} | "
+            f"M15={components['m15_confirmation']:.2f} | "
+            f"TOTAL={score:.2f}/{maximum:.2f}"
         )
 
     def build_signal(
@@ -1959,13 +1890,9 @@ class SignalEngine:
         h4: pd.DataFrame,
         h1: pd.DataFrame,
         m15: pd.DataFrame,
+        symbol: Optional[str] = None,
     ) -> Optional[SignalResult]:
-
-        regime_engine = RegimeEngine(
-            self.config,
-            self.logger,
-        )
-
+        regime_engine = RegimeEngine(self.config, self.logger)
         regime = regime_engine.analyze(h4)
 
         if regime is None:
@@ -1980,207 +1907,154 @@ class SignalEngine:
             h1_details,
         ) = self.h1_analysis(h1)
 
-        desired = h1_dir
+        candidate = h1_dir
 
         (
             m15_dir,
-            m15_score,
-            m15_max,
-        ) = self.m15_confirmation(
-            m15,
-            desired,
+            m15_confirmation_score,
+            m15_confirmation_max,
+            m15_details,
+        ) = self.m15_confirmation(m15, candidate)
+
+        signal_cfg = self.config.get("signal_engine", default={})
+        weights = self._weights()
+
+        configured_maximum = float(
+            signal_cfg.get("maximum_score", 10.0)
         )
 
-        signal_cfg = self.config.get(
-            "signal_engine",
-            default={},
-        )
+        weight_sum = sum(weights.values())
 
-        require_h4 = bool(
-            signal_cfg.get(
-                "require_h4_alignment",
-                True,
+        if abs(weight_sum - configured_maximum) > 1e-9:
+            self.logger.warning(
+                f"Signal weights total {weight_sum:.4f} != "
+                f"configured maximum_score {configured_maximum:.4f}. "
+                f"The configured weights remain authoritative."
             )
-        )
 
-        require_h1 = bool(
-            signal_cfg.get(
-                "require_h1_alignment",
-                True,
+        maximum_score = weight_sum
+
+        # If H1 has no direction, there is no valid candidate.
+        if candidate == NEUTRAL:
+            score = 0.0
+            components = {
+                "h4_trend": 0.0,
+                "h1_trend": 0.0,
+                "supertrend": 0.0,
+                "ichimoku": 0.0,
+                "rsi": 0.0,
+                "macd": 0.0,
+                "m15_confirmation": 0.0,
+            }
+        else:
+            score, components = self._global_score(
+                candidate,
+                h4_dir,
+                h1_details,
+                m15_dir,
             )
-        )
-
-        require_m15 = bool(
-            signal_cfg.get(
-                "require_m15_confirmation",
-                True,
-            )
-        )
-
-        final_direction = desired
-
-        if require_h4:
-            if (
-                final_direction == NEUTRAL
-                or h4_dir != final_direction
-            ):
-                final_direction = NEUTRAL
-
-        if require_h1:
-            if h1_dir == NEUTRAL:
-                final_direction = NEUTRAL
-
-        if require_m15:
-            if (
-                final_direction == NEUTRAL
-                or m15_dir != final_direction
-            ):
-                final_direction = NEUTRAL
 
         quality = self.calculate_quality(
             regime,
             h1_score,
             h1_max,
-            m15_score,
-            m15_max,
+            m15_confirmation_score,
+            m15_confirmation_max,
         )
 
-        filters = self.config.get(
-            "filters",
-            default={},
-        )
+        # --------------------------------------------------------
+        # Hard alignment requirements from config.
+        # --------------------------------------------------------
+        final_direction = candidate
 
-        min_adx = float(
-            filters.get(
-                "min_adx",
-                18.0,
-            )
-        )
+        require_h4 = bool(signal_cfg.get("require_h4_alignment", True))
+        require_h1 = bool(signal_cfg.get("require_h1_alignment", True))
+        require_m15 = bool(signal_cfg.get("require_m15_confirmation", True))
 
+        if final_direction == NEUTRAL:
+            final_direction = NEUTRAL
+
+        if require_h4 and (final_direction == NEUTRAL or h4_dir != final_direction):
+            final_direction = NEUTRAL
+
+        if require_h1 and (final_direction == NEUTRAL or h1_dir != final_direction):
+            final_direction = NEUTRAL
+
+        if require_m15 and (final_direction == NEUTRAL or m15_dir != final_direction):
+            final_direction = NEUTRAL
+
+        # --------------------------------------------------------
+        # Market filters.
+        # --------------------------------------------------------
+        filters = self.config.get("filters", default={})
+
+        min_adx = float(filters.get("min_adx", 18.0))
         if regime.adx < min_adx:
             final_direction = NEUTRAL
 
-        if (
-            filters.get(
-                "avoid_overextended_rsi",
-                True,
-            )
-        ):
-            rsi = h1_details["rsi"]
+        if filters.get("avoid_overextended_rsi", True):
+            rsi = safe_float(h1_details.get("rsi"), np.nan)
+            extreme_buy = float(filters.get("rsi_extreme_buy", 75.0))
+            extreme_sell = float(filters.get("rsi_extreme_sell", 25.0))
 
-            extreme_buy = float(
-                filters.get(
-                    "rsi_extreme_buy",
-                    75,
-                )
-            )
-
-            extreme_sell = float(
-                filters.get(
-                    "rsi_extreme_sell",
-                    25,
-                )
-            )
-
-            if (
-                final_direction == BUY
-                and rsi >= extreme_buy
-            ):
+            if final_direction == BUY and math.isfinite(rsi) and rsi >= extreme_buy:
                 final_direction = NEUTRAL
 
-            if (
-                final_direction == SELL
-                and rsi <= extreme_sell
-            ):
+            if final_direction == SELL and math.isfinite(rsi) and rsi <= extreme_sell:
                 final_direction = NEUTRAL
 
-        market_cfg = self.config.get(
-            "market_regime",
-            default={},
-        )
+        market_cfg = self.config.get("market_regime", default={})
+        low_percentile = float(market_cfg.get("low_volatility_percentile", 20.0))
+        high_percentile = float(market_cfg.get("high_volatility_percentile", 80.0))
 
-        low_percentile = float(
-            market_cfg.get(
-                "low_volatility_percentile",
-                20,
-            )
-        )
-
-        high_percentile = float(
-            market_cfg.get(
-                "high_volatility_percentile",
-                80,
-            )
-        )
-
-        if filters.get(
-            "avoid_low_volatility",
-            True,
-        ):
-            if (
-                regime.atr_percentile
-                <= low_percentile
-            ):
+        if filters.get("avoid_low_volatility", True):
+            if regime.atr_percentile <= low_percentile:
                 final_direction = NEUTRAL
 
-        if filters.get(
-            "avoid_extreme_volatility",
-            True,
-        ):
-            if (
-                regime.atr_percentile
-                >= 98
-            ):
+        # Config calls this high_volatility_percentile=80, but the existing
+        # V7 policy explicitly avoided only extreme volatility at >=98.
+        # Preserve that policy; 80 is not automatically a trade blocker.
+        if filters.get("avoid_extreme_volatility", True):
+            if regime.atr_percentile >= 98.0:
                 final_direction = NEUTRAL
 
-        minimum_score = float(
-            signal_cfg.get(
-                "minimum_score",
-                7.0,
-            )
-        )
+        minimum_score = float(signal_cfg.get("minimum_score", 7.0))
 
-        maximum_score = float(
-            signal_cfg.get(
-                "maximum_score",
-                10.0,
-            )
-        )
-
-        # Score normalisé sur l'échelle configurée.
-        normalized_score = (
-            quality * maximum_score
-        )
-
-        if normalized_score < minimum_score:
+        # CRITICAL FIX:
+        # The real configured score is tested here. QUALITY IS NOT THE SCORE.
+        if score < minimum_score:
             final_direction = NEUTRAL
 
         reasons = []
 
-        if h4_dir == final_direction:
+        if h4_dir == final_direction and final_direction != NEUTRAL:
             reasons.append("H4_ALIGN")
-
-        if h1_dir == final_direction:
+        if h1_dir == final_direction and final_direction != NEUTRAL:
             reasons.append("H1_ALIGN")
-
-        if m15_dir == final_direction:
+        if m15_dir == final_direction and final_direction != NEUTRAL:
             reasons.append("M15_CONFIRM")
-
         if regime.adx >= min_adx:
             reasons.append("ADX_OK")
-
-        if (
-            low_percentile
-            < regime.atr_percentile
-            < 98
-        ):
+        if low_percentile < regime.atr_percentile < 98.0:
             reasons.append("VOL_OK")
+        if score >= minimum_score:
+            reasons.append("SCORE_OK")
 
-        if final_direction == NEUTRAL:
-            reason = "NO_VALID_SIGNAL"
+        reason = "|".join(reasons) if final_direction != NEUTRAL else "NO_VALID_SIGNAL"
 
-        else:
-            reason = "|".join(reasons)
+        self._log_score(
+            symbol=symbol,
+            candidate=candidate,
+            h4_dir=h4_dir,
+            h1_dir=h1_dir,
+            m15_dir=m15_dir,
+            score=score,
+            maximum=maximum_score,
+            components=components,
+            quality=quality,
+            regime=regime,
+            decision=final_direction,
+        )
 
         return SignalResult(
             direction=final_direction,
@@ -2189,22 +2063,16 @@ class SignalEngine:
             m15_direction=m15_dir,
             h1_score=h1_score,
             h1_max_score=h1_max,
-            m15_score=m15_score,
-            m15_max_score=m15_max,
+            m15_score=m15_confirmation_score,
+            m15_max_score=m15_confirmation_max,
             regime=regime.name,
             adx=regime.adx,
             atr=regime.atr,
             atr_percentile=regime.atr_percentile,
             rsi=h1_details["rsi"],
-            macd_histogram=h1_details[
-                "macd_histogram"
-            ],
-            supertrend_direction=h1_details[
-                "supertrend_direction"
-            ],
-            ichimoku_direction=h1_details[
-                "ichimoku_direction"
-            ],
+            macd_histogram=h1_details["macd_histogram"],
+            supertrend_direction=h1_details["supertrend_direction"],
+            ichimoku_direction=h1_details["ichimoku_direction"],
             quality=quality,
             reason=reason,
         )
@@ -5258,6 +5126,7 @@ class TradingEngine:
             h4,
             h1,
             m15,
+            symbol=symbol,
         )
 
         if signal is None:
