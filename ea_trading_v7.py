@@ -3302,7 +3302,7 @@ class ExecutionEngine:
         )
 
         if info is None:
-            return mt5.ORDER_FILLING_FOK
+            return mt5.ORDER_FILLING_RETURN
 
         supported = int(
             getattr(
@@ -3318,15 +3318,17 @@ class ExecutionEngine:
         if requested == "IOC":
             return mt5.ORDER_FILLING_IOC
 
-        # AUTO
-        if supported & mt5.SYMBOL_FILLING_FOK:
+        SYMBOL_FILLING_FOK = 1
+        SYMBOL_FILLING_IOC = 2
+
+        if supported & SYMBOL_FILLING_FOK:
             return mt5.ORDER_FILLING_FOK
 
-        if supported & mt5.SYMBOL_FILLING_IOC:
+        if supported & SYMBOL_FILLING_IOC:
             return mt5.ORDER_FILLING_IOC
 
         return mt5.ORDER_FILLING_RETURN
-
+    
     def normalize_price(
         self,
         symbol: str,
