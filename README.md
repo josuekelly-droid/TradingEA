@@ -30,8 +30,12 @@ Le script est architecturé de manière modulaire :
 
 
 ## Configuration
-Le bot nécessite un fichier de configuration nommé config_v7.json placé à la racine du projet, contenant les sections indispensables suivantes : ea, mt5, symbols, timeframes, market_regime , indicators, signal_engine, risk_management, stop_loss, take_profit , position_management, sessions, news_filter, execution, filters, logging, state, telegram
+Le bot nécessite un fichier de configuration nommé config_v7.json placé à la racine du projet, contenant les sections indispensables suivantes : 
+```bash
+ea, mt5, symbols, timeframes, market_regime , indicators, signal_engine, risk_management, stop_loss, take_profit , position_management, sessions, news_filter, execution, filters, logging, state, telegram
 
 
 ## Utilisation
-Lancez simplement le script principal : python nom_du_script.py
+Lancez simplement le script principal : 
+```bash
+python nom_du_script.py
