@@ -36,5 +36,5 @@ Le bot nécessite un fichier de configuration nommé config_v7.json placé à la
 ---
 
 ## Utilisation
-  
-  python nom_du_script.py
+
+python nom_du_script.py
