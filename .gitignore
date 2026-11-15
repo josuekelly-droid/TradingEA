@@ -1,6 +1,7 @@
 
 config.json
 config_v7.json
+config_v8.json
 *.log
 
 # Environnement Python
