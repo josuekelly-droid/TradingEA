@@ -1,4 +1,7 @@
 {
-    "blackout": false,
-    "blackout_end": "2026-11-16T15:31:50.601225+00:00"
+    "blackout": true,
+    "blackout_end": "2026-11-16T17:30:00+00:00",
+    "event_title": "Fed Chairman Warsh Speaks",
+    "event_time": "2026-11-16T17:00:00+00:00",
+    "country": "USD"
 }
