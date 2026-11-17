@@ -14,21 +14,6 @@
       "tp1_hit": false,
       "tp2_hit": false,
       "created_at": "2026-11-17T11:00:10.414293+00:00"
-    },
-    "77433597": {
-      "ticket": 77433597,
-      "symbol": "XAUUSD",
-      "direction": -1,
-      "entry": 3853.8,
-      "initial_sl": 3889.42,
-      "initial_risk": 35.61999999999989,
-      "tp1": 3818.1800000000003,
-      "tp2": 3782.5600000000004,
-      "tp3": 3746.9400000000005,
-      "initial_volume": 0.07,
-      "tp1_hit": false,
-      "tp2_hit": false,
-      "created_at": "2026-11-17T11:00:15.420732+00:00"
     }
   },
   "meta": {
