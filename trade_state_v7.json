@@ -1,7 +1,38 @@
 {
-  "positions": {},
+  "positions": {
+    "77302196": {
+      "ticket": 77302196,
+      "symbol": "XAUUSD",
+      "direction": -1,
+      "entry": 3851.46,
+      "initial_sl": 3889.42084857668,
+      "initial_risk": 37.96084857667984,
+      "tp1": 3818.15915142332,
+      "tp2": 3782.52830284664,
+      "tp3": 3746.8974542699602,
+      "initial_volume": 0.06,
+      "tp1_hit": false,
+      "tp2_hit": false,
+      "created_at": "2026-11-17T11:00:10.414293+00:00"
+    },
+    "77433597": {
+      "ticket": 77433597,
+      "symbol": "XAUUSD",
+      "direction": -1,
+      "entry": 3853.8,
+      "initial_sl": 3889.42,
+      "initial_risk": 35.61999999999989,
+      "tp1": 3818.1800000000003,
+      "tp2": 3782.5600000000004,
+      "tp3": 3746.9400000000005,
+      "initial_volume": 0.07,
+      "tp1_hit": false,
+      "tp2_hit": false,
+      "created_at": "2026-11-17T11:00:15.420732+00:00"
+    }
+  },
   "meta": {
-    "last_signal_key": "BTCUSD|SELL|2026-11-16 08:00:00+00:00",
-    "last_trade_XAUUSD": "2026-11-13T17:41:21.011429+00:00"
+    "last_signal_key": "XAUUSD|SELL|2026-11-17 10:00:00+00:00",
+    "last_trade_XAUUSD": "2026-11-17T11:00:10.416305+00:00"
   }
 }
