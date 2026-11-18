@@ -21,3 +21,5 @@ __pycache__/
 Thumbs.dbconfig_v7.json
 trade_state_v8.json
 ea_trading_v8.py
+logs/
+config_v8.json
