@@ -3,7 +3,6 @@ config.json
 config_v7.json
 config_v8.json
 ea_trading_v8.py
-trade_state_v8.json
 *.log
 
 # Environnement Python
@@ -20,3 +19,5 @@ __pycache__/
 
 .DS_Store
 Thumbs.dbconfig_v7.json
+trade_state_v8.json
+ea_trading_v8.py
