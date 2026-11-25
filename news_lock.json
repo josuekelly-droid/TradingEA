@@ -1,7 +1,4 @@
 {
-    "blackout": true,
-    "blackout_end": "2026-11-25T14:00:00+00:00",
-    "event_title": "Core PCE Price Index m/m",
-    "event_time": "2026-11-25T13:30:00+00:00",
-    "country": "USD"
+    "blackout": false,
+    "blackout_end": "2026-11-25T15:14:53.364458+00:00"
 }
