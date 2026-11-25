@@ -3379,6 +3379,8 @@ class ExecutionEngine:
         direction: int,
         volume: float,
         sl: float,
+        tp1: float,
+        tp2: float, 
         tp3: float,
         signal: SignalResult,
     ) -> Optional[Any]:
@@ -3594,8 +3596,8 @@ class ExecutionEngine:
                         "volume": volume,
                         "entry": entry,
                         "sl": sl,
-                        "tp1": "",
-                        "tp2": "",
+                        "tp1": tp1,
+                        "tp2": tp2,
                         "tp3": tp3,
                         "regime": signal.regime,
                         "quality": signal.quality,
@@ -3615,6 +3617,8 @@ class ExecutionEngine:
                             f"Volume: {volume}\n"
                             f"Entry: {entry}\n"
                             f"SL: {sl}\n"
+                            f"TP1: {tp1}\n"
+                            f"TP2: {tp2}\n"
                             f"TP3: {tp3}\n"
                             f"Regime: {signal.regime}\n"
                             f"Quality: "
@@ -5349,6 +5353,8 @@ class TradingEngine:
             signal.direction,
             volume,
             sl,
+            tp1,
+            tp2,
             tp3,
             signal,
         )
