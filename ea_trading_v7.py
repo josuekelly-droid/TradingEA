@@ -3848,12 +3848,38 @@ class ExecutionEngine:
                     "reason": "POSITION_CLOSE",
                 })
 
+                # 1. On récupère le prix exact de sortie du broker
+                exit_price = safe_float(getattr(result, "price", price))
+                
+                # 2. On calcule le profit exact (en utilisant le sens d'origine)
+                profit = 0.0
+                try:
+                    original_type = mt5.ORDER_TYPE_BUY if position.type == mt5.POSITION_TYPE_BUY else mt5.ORDER_TYPE_SELL
+                    
+                    calc_profit = mt5.order_calc_profit(
+                        original_type,
+                        symbol,
+                        volume,
+                        position.price_open,
+                        exit_price,
+                    )
+                    if calc_profit is not None:
+                        profit = safe_float(calc_profit)
+                except Exception:
+                    pass
+                
+                # 3. On formate le profit
+                profit_str = f"+{profit:.2f} $" if profit > 0 else f"{profit:.2f} $"
+
+                # 4. On envoie le message complet
                 self.telegram.send(
                     (
                         f"<b>V7 EXIT</b>\n"
                         f"{symbol}\n"
                         f"Ticket: {position.ticket}\n"
-                        f"Volume: {volume}"
+                        f"Volume: {volume}\n"
+                        f"Prix: {exit_price}\n"
+                        f"Profit: {profit_str}"
                     ),
                     category="exit",
                 )
